@@ -31,8 +31,14 @@
 
 </div>
 
-> [!IMPORTANT]
-> **This works beyond code too.** [**Try Trail Brain**](https://app.trailhq.com/get-started?step=pick), a living skill file that learns from every task and gets sharper the more your team works.
+<p align="center">
+  <b>This works beyond code too.</b><br/>
+  A living skill file that learns from every task and gets sharper the more your team works.
+</p>
+
+<p align="center">
+  <a href="https://app.trailhq.com/get-started?step=pick"><img src="https://img.shields.io/badge/Try%20Trail%20Brain%20%E2%86%92-E5484D?style=for-the-badge" alt="Try Trail Brain" height="34"/></a>
+</p>
 
 <p align="center">
   <img src="assets/graft-comparison-demo.gif" alt="Side-by-side comparison of a coding agent working with and without graft" width="820"/>
