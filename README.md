@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-20C997?style=for-the-badge" />
   <a href="TELEMETRY.md"><img src="https://img.shields.io/badge/telemetry-anonymous%2C%20opt--out-546FFF?style=for-the-badge" /></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/NanoNets/Graft"><img src="https://img.shields.io/ossf-scorecard/github.com/NanoNets/Graft?style=for-the-badge&label=openssf%20scorecard" /></a>
-  <a href="https://github.com/apps/trailhq-graft"><img src="https://img.shields.io/badge/PR%20reviews-install%20GitHub%20App-546FFF?style=for-the-badge&logo=github&logoColor=white" /></a>
+  <a href="https://app.trailhq.com/get-started?step=pick"><img src="https://img.shields.io/badge/Trail%20Brain-try%20it-546FFF?style=for-the-badge&logoColor=white" /></a>
 </p>
 
 ### Up to **4× cheaper** and **3× faster**, with better or no loss of correctness.
@@ -31,7 +31,7 @@
 
 </div>
 
-<p align="center"><b>Reviewing pull requests?</b> <a href="https://github.com/apps/trailhq-graft">Add the graft GitHub App</a> to get an automatic blast-radius review on every PR.</p>
+<p align="center"><b>Want this beyond code?</b> <a href="https://app.trailhq.com/get-started?step=pick">Try Trail Brain</a>, a self-learning evolution of the skill file that grows from your team's context so any agent gets sharper the more it works, on any workflow, not just coding.</p>
 
 <p align="center">
   <img src="assets/graft-comparison-demo.gif" alt="Side-by-side comparison of a coding agent working with and without graft" width="820"/>
