@@ -20,7 +20,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { timingSafeEqual } from "node:crypto";
 import { jobKey, reviewJobFor, type ReviewJob } from "./events.js";
 import { InstallationTokens, verifySignature, type AppCredentials, type Fetch } from "./identity.js";
-import { buildRepoIntoBrain, RepoNotAccessibleError, type BrainBuildJob } from "./brain-build.js";
+import { buildRepoIntoBrain, checkRepoAccess, RepoNotAccessibleError, type BrainBuildJob } from "./brain-build.js";
 import { PageStore } from "./pages.js";
 import { WorkQueue } from "./queue.js";
 import { reviewInChildProcess } from "./review-process.js";
@@ -35,6 +35,9 @@ export interface AppSeams {
   /** Swapped out so a test can assert what the route handed the builder without
    * cloning a repository or reaching GitHub. */
   brainBuild?: typeof buildRepoIntoBrain;
+  /** Swapped out so a test can assert the access route's answers without
+   * reaching GitHub. */
+  brainAccess?: typeof checkRepoAccess;
   /** Swapped out to assert what the queue was handed, without a clone — and, being
    * called in-process, without the fork the default reviewer does. */
   review?: typeof reviewPullRequest;
@@ -144,6 +147,48 @@ export function createApp(
       queue.push(jobKey(decided.job), decided.job);
       log(`${jobKey(decided.job)}: queued${decided.job.fromFork ? " (fork)" : ""}`);
       return send(res, 202, "application/json", JSON.stringify({ queued: true }));
+    }
+
+    // Can we read this repository? The cheap question, answered on its own.
+    //
+    // Same secret as /brain/build, because it is the same caller and the same
+    // trust. Kept separate from it because it costs a second where the build
+    // costs minutes, and the platform needs the answer before it can decide
+    // which screen to show.
+    if (req.method === "POST" && url.pathname === "/brain/access") {
+      if (!config.brainBuildSecret) return send(res, 404, "text/plain", "not found");
+      if (!bearerMatches(header(req, "authorization"), config.brainBuildSecret)) {
+        return send(res, 401, "text/plain", "unauthorized");
+      }
+      const body = await readBody(req);
+      if (body === null) return send(res, 413, "text/plain", "payload too large");
+      let ask: { owner?: string; repo?: string };
+      try {
+        ask = JSON.parse(body) as { owner?: string; repo?: string };
+      } catch {
+        return send(res, 400, "text/plain", "bad json");
+      }
+      if (!ask.owner || !ask.repo) {
+        return send(res, 400, "application/json", JSON.stringify({ error: "owner and repo are required" }));
+      }
+      try {
+        const access = await (seams.brainAccess ?? checkRepoAccess)({ owner: ask.owner, repo: ask.repo }, {
+          creds: config,
+          fetch: fetchImpl,
+          api: config.api,
+          publicToken: config.publicToken,
+          publicOwner: config.publicOwner,
+          log,
+          now: seams.now,
+        });
+        // 200 either way: "we cannot see it" is an answer, not a failure, and
+        // the platform turns it into a choice rather than an error.
+        return send(res, 200, "application/json", JSON.stringify(access));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        log(`brain access ${ask.owner}/${ask.repo} failed: ${msg}`);
+        return send(res, 502, "application/json", JSON.stringify({ error: msg }));
+      }
     }
 
     // Build one repository into a brain, on demand. Called by the platform when

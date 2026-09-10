@@ -113,6 +113,55 @@ export class RepoNotAccessibleError extends Error {
   }
 }
 
+/** What a repository lets us do, before any of the work is started. */
+export interface RepoAccess {
+  /** True when we can read it: installed on it, or it is public. */
+  accessible: boolean;
+  isPrivate: boolean;
+  /** How we would read it — for the log, and for deciding nothing else. */
+  via: "installation" | "public" | "none";
+  /** Set only when accessible is false: what to tell the user, and where to
+   * send them. Same shape RepoNotAccessibleError carries. */
+  reason?: string;
+  gap?: RepoAccessGap;
+}
+
+/**
+ * Can we read this repository at all?
+ *
+ * The cheap half of a build, on its own: an installation lookup and at most
+ * one repository lookup, about a second in total, with no clone and no graph.
+ *
+ * It exists as its own call because the answer decides which screen the user
+ * sees next, and the rest of the read takes minutes. Waiting for the whole
+ * build to find out means either holding the person there or guessing from a
+ * timer, and a guess is wrong exactly when the box is busy — which is when
+ * two people are onboarding at once.
+ */
+export async function checkRepoAccess(job: { owner: string; repo: string }, deps: BrainBuildDeps): Promise<RepoAccess> {
+  const api = deps.api ?? "https://api.github.com";
+  const installationId = await installationFor(deps.creds, job.owner, job.repo, deps.fetch, (deps.now ?? Date.now)(), api);
+  if (installationId !== null) {
+    const token = await installationToken(deps, installationId, `${job.owner}/${job.repo}`, api);
+    const meta = await repoMeta(job.owner, job.repo, token, deps.fetch, api);
+    return { accessible: true, isPrivate: meta?.isPrivate ?? true, via: "installation" };
+  }
+  const meta = await repoMeta(job.owner, job.repo, await publicReadToken(deps, api), deps.fetch, api);
+  if (meta && !meta.isPrivate) return { accessible: true, isPrivate: false, via: "public" };
+
+  const gap = await repoAccessGap(deps.creds, job.owner, deps.fetch, (deps.now ?? Date.now)(), api);
+  return {
+    accessible: false,
+    isPrivate: true,
+    via: "none",
+    reason:
+      gap.reason === "repo_not_selected"
+        ? `graft is installed on ${job.owner} but ${job.owner}/${job.repo} is not in the list of repositories it can see`
+        : `graft is not installed on ${job.owner}`,
+    gap,
+  };
+}
+
 /**
  * Read the repository and hand its history to the brain.
  *
