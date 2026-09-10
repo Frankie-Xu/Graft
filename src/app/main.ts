@@ -53,6 +53,7 @@ const { server, queue } = createApp({
   brainBuildSecret: process.env.GRAFT_BRAIN_BUILD_SECRET,
   brainBaseUrl: process.env.GRAFT_BRAIN_URL,
   publicToken: process.env.GRAFT_PUBLIC_GITHUB_TOKEN || process.env.GITHUB_TOKEN,
+  publicOwner: process.env.GRAFT_PUBLIC_INSTALLATION_OWNER,
 });
 
 /**

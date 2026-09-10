@@ -51,9 +51,11 @@ export interface AppConfig extends AppCredentials {
   /** Platform base URL the digest is posted to. Defaults to production. */
   brainBaseUrl?: string;
   /** Token for reading public repositories the App is not installed on.
-   * Optional — without it those reads are anonymous, and anonymous runs out of
-   * rate limit after about one repository an hour. */
+   * Optional — without it the read borrows one of our own installation's
+   * tokens, and only falls back to anonymous if the App has none. */
   publicToken?: string;
+  /** Whose installation to borrow for that. Defaults to ours. */
+  publicOwner?: string;
   /** Public origin, for the links put in comments, e.g. https://graft.example.com */
   publicUrl: string;
   /** Where pages are kept, so a restart does not strand the links already posted. */
@@ -181,6 +183,7 @@ export function createApp(
           fetch: fetchImpl,
           api: config.api,
           publicToken: config.publicToken,
+          publicOwner: config.publicOwner,
           log,
           now: seams.now,
         });

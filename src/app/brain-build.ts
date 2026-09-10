@@ -15,7 +15,16 @@ import { buildGraph } from "../graph/build.js";
 import { contextDirFor } from "../context/node-file.js";
 import { loadGraphCached } from "../graph/load.js";
 import { checkoutRepository } from "./checkout.js";
-import { appJwt, ghHeaders, installationFor, repoAccessGap, type AppCredentials, type Fetch, type RepoAccessGap } from "./identity.js";
+import {
+  appJwt,
+  ghHeaders,
+  installationFor,
+  publicReadInstallation,
+  repoAccessGap,
+  type AppCredentials,
+  type Fetch,
+  type RepoAccessGap,
+} from "./identity.js";
 import { buildDigest, postDigest, readCommits, readSymbols, readThreads, type RepoDigest } from "./history.js";
 import {
   budgetSources,
@@ -79,13 +88,16 @@ export interface BrainBuildDeps {
   /**
    * Token used for a public repository the App is not installed on.
    *
-   * Optional, and the read works without it: a public repo clones anonymously
-   * and answers the API anonymously too. What it buys is the rate limit —
-   * anonymous is 60 requests an hour for the whole box, which the pull-request
-   * walk exhausts on the first repository of the day, after which every later
-   * build quietly degrades to commits only.
+   * Optional. Without it the read borrows one of our own installation's tokens,
+   * which GitHub answers for any public resource, and falls back to anonymous
+   * if the App has no installations at all. Anonymous works but is 60 requests
+   * an hour for the whole box — one pull-request walk — so it is the last
+   * resort, not the plan.
    */
   publicToken?: string;
+  /** Whose installation to borrow for those reads. Ours, so a public read
+   * spends our rate limit and not a customer's. */
+  publicOwner?: string;
 }
 
 /** Raised when the App cannot see the repository. Distinct because the caller
@@ -133,14 +145,17 @@ export async function buildRepoIntoBrain(
   // single-ref fetch (there is no origin/HEAD to resolve), so both are read
   // from the API rather than guessed.
   let token = "";
+  let cloneToken: string | null = null;
   let meta: RepoMeta | null = null;
   if (installationId !== null) {
     token = await installationToken(deps, installationId, tag, api);
     meta = await repoMeta(job.owner, job.repo, token, deps.fetch, api);
   } else {
-    // No installation. If the repository answers anonymously and says it is
-    // public, that is all the access this read needs.
-    token = deps.publicToken ?? "";
+    // No installation on this repository. That rules out nothing yet: a public
+    // repo clones with no credential at all, and its API answers to any token
+    // we hold. So find a credential for the reading, then ask the repo whether
+    // it is in fact public.
+    token = await publicReadToken(deps, api);
     meta = await repoMeta(job.owner, job.repo, token, deps.fetch, api);
     if (!meta || meta.isPrivate) {
       // Which of the two gaps it is decides what the UI can offer, so it is
@@ -154,6 +169,10 @@ export async function buildRepoIntoBrain(
       );
     }
     log(`${tag}: no installation, reading it as a public repository${token ? "" : " anonymously"}`);
+    // The clone is the one part that stays anonymous. A public repository
+    // serves it to anyone, and a token minted for a different account is not
+    // something git is promised to accept on this one.
+    cloneToken = "";
   }
   if (!meta) meta = { isPrivate: true, defaultBranch: "" };
 
@@ -161,7 +180,7 @@ export async function buildRepoIntoBrain(
     owner: job.owner,
     repo: job.repo,
     ref: job.ref || meta.defaultBranch,
-    token,
+    token: cloneToken ?? token,
     api: deps.githubHost,
     log,
   });
@@ -266,6 +285,31 @@ async function repoMeta(owner: string, repo: string, token: string, fetchImpl: F
     };
   } catch {
     return null;
+  }
+}
+
+/**
+ * A credential for reading a public repository we are not installed on.
+ *
+ * Order: a token configured for exactly this, then one of our own
+ * installation's, then nothing. Every step of that ladder works — the
+ * difference is only the rate limit, and the drop to anonymous is a factor of
+ * eighty, so it is worth two extra calls to avoid.
+ */
+async function publicReadToken(deps: BrainBuildDeps, api: string): Promise<string> {
+  if (deps.publicToken) return deps.publicToken;
+  try {
+    const id = await publicReadInstallation(
+      deps.creds,
+      deps.publicOwner ?? "trailhq",
+      deps.fetch,
+      (deps.now ?? Date.now)(),
+      api,
+    );
+    if (id === null) return "";
+    return await installationToken(deps, id, "public read", api);
+  } catch {
+    return "";
   }
 }
 

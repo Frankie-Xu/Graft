@@ -94,6 +94,41 @@ export function ghHeaders(token: string): Record<string, string> {
   return headers;
 }
 
+/**
+ * An installation token for reading PUBLIC repositories the App is not
+ * installed on.
+ *
+ * GitHub answers any public resource to any installation token, at 5,000
+ * requests an hour. Anonymous answers the same resources at 60 an hour for the
+ * whole box, which one repository's pull-request walk spends in a minute — so
+ * without this, the second public repo of the hour reads as "we cannot see it".
+ *
+ * `owner` is our own account, so this borrows OUR installation's rate limit
+ * rather than some customer's. Falls back to the first installation, and to
+ * null when the App has none, in which case the caller reads anonymously.
+ */
+export async function publicReadInstallation(
+  creds: AppCredentials,
+  owner: string,
+  fetchImpl: Fetch,
+  nowMs: number = Date.now(),
+  api = "https://api.github.com",
+): Promise<number | null> {
+  const res = await fetchImpl(`${api}/app/installations?per_page=100`, {
+    headers: {
+      authorization: `Bearer ${appJwt(creds, nowMs)}`,
+      accept: "application/vnd.github+json",
+      "user-agent": "graft-app",
+    },
+  });
+  if (!res.ok) return null;
+  const list = JSON.parse(await res.text()) as Array<{ id?: number; account?: { login?: string } }>;
+  if (!Array.isArray(list) || list.length === 0) return null;
+  const wanted = owner.toLowerCase();
+  const mine = list.find((i) => (i.account?.login ?? "").toLowerCase() === wanted);
+  return (mine ?? list[0]).id ?? null;
+}
+
 export async function installationFor(
   creds: AppCredentials,
   owner: string,
