@@ -38,12 +38,26 @@ export interface FailedMessage {
 
 export type FromChild = LogMessage | DoneMessage | FailedMessage;
 
-function send(msg: FromChild): void {
-  if (!process.send) return;
+/**
+ * Send, and tell me when it has actually gone.
+ *
+ * `process.send` is asynchronous, and a digest of a large repository is several
+ * megabytes — a thousand commits, four thousand symbols. Disconnecting on the
+ * next line tears the channel down mid-write: the child exits 0, having done
+ * every bit of the work, and the parent reports "exited before reporting a
+ * result". It only shows on big repositories, because a small payload clears
+ * the pipe in one write and survives the race.
+ */
+function send(msg: FromChild, done?: () => void): void {
+  if (!process.send) {
+    done?.();
+    return;
+  }
   try {
-    process.send(msg);
+    process.send(msg, undefined, undefined, () => done?.());
   } catch {
     /* parent went away; the exit is the report */
+    done?.();
   }
 }
 
@@ -60,13 +74,9 @@ process.on("message", (raw) => {
     log: (line: string) => send({ t: "log", msg: line }),
   }, msg.auth)
     .then((result) => {
-      send({ t: "done", result });
-      // The digest can be several megabytes and the channel is asynchronous, so
-      // let the write drain rather than exiting out from under it.
-      process.disconnect?.();
+      send({ t: "done", result }, () => process.disconnect?.());
     })
     .catch((e: unknown) => {
-      send({ t: "failed", message: e instanceof Error ? e.message : String(e) });
-      process.disconnect?.();
+      send({ t: "failed", message: e instanceof Error ? e.message : String(e) }, () => process.disconnect?.());
     });
 });
