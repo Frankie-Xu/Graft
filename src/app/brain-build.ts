@@ -128,9 +128,22 @@ export async function buildRepoIntoBrain(
   job: BrainBuildJob,
   deps: BrainBuildDeps,
 ): Promise<BrainBuildResult> {
-  const log = deps.log ?? ((): void => {});
+  const rawLog = deps.log ?? ((): void => {});
   const api = deps.api ?? "https://api.github.com";
   const tag = `${job.owner}/${job.repo}`;
+
+  // Every line carries how long we have been at it. A read that feels slow is
+  // four things in a trench coat — the access check, the clone, the graph
+  // build, the pull-request walk — and without the elapsed time on each, the
+  // only observation anyone can make is "it took two minutes".
+  const startedAt = (deps.now ?? Date.now)();
+  const log = (msg: string): void => rawLog(`[+${(((deps.now ?? Date.now)() - startedAt) / 1000).toFixed(1)}s] ${msg}`);
+  const phase = (name: string): (() => void) => {
+    const at = (deps.now ?? Date.now)();
+    return () => log(`${tag}: ${name} took ${(((deps.now ?? Date.now)() - at) / 1000).toFixed(1)}s`);
+  };
+
+  const doneAccess = phase("access check");
 
   const installationId = await installationFor(
     deps.creds,
@@ -175,7 +188,9 @@ export async function buildRepoIntoBrain(
     cloneToken = "";
   }
   if (!meta) meta = { isPrivate: true, defaultBranch: "" };
+  doneAccess();
 
+  const doneClone = phase("clone");
   const checkout = checkoutRepository({
     owner: job.owner,
     repo: job.repo,
@@ -184,11 +199,14 @@ export async function buildRepoIntoBrain(
     api: deps.githubHost,
     log,
   });
+  doneClone();
   try {
     // `graphOnly`: the symbol ids and their hashes are all the digest needs, and
     // the markdown projections cost real time on a large repo.
+    const doneGraph = phase("symbol graph");
     await buildGraph(checkout.dir, { graphOnly: true });
     const graph = loadGraphCached(contextDirFor(checkout.dir));
+    doneGraph();
 
     const commits = readCommits(checkout.dir);
     const symbols = readSymbols(graph);
@@ -196,15 +214,19 @@ export async function buildRepoIntoBrain(
     // one most likely to fail on a rate limit. A failure here degrades to a
     // commits-only ingest rather than losing the whole build.
     let threads: Awaited<ReturnType<typeof readThreads>> = [];
+    const doneThreads = phase("pull-request discussion");
     try {
       threads = await readThreads(job.owner, job.repo, token, deps.fetch, api);
     } catch (e) {
       log(`${tag}: pull-request discussion unavailable (${e instanceof Error ? e.message : e}); mining commits only`);
     }
 
+    doneThreads();
+
     // Everything the repo already states as a rule. All best-effort: the file
     // readers cannot fail the build, and the two API readers swallow their own
     // errors, so a repo with none of this still gets a brain from its history.
+    const doneSources = phase("stated sources");
     const sources = budgetSources([
       ...readAgentInstructions(checkout.dir),
       ...readDecisionDocs(checkout.dir),
@@ -215,6 +237,8 @@ export async function buildRepoIntoBrain(
       ...(await readBranchProtection(job.owner, job.repo, meta.defaultBranch, token, deps.fetch, api)),
       ...(await readDeclinedIssues(job.owner, job.repo, token, deps.fetch, api)),
     ]);
+
+    doneSources();
 
     log(
       `${tag}: read ${commits.length} commits, ${threads.length} threads, ${symbols.length} symbols, ${sources.length} stated sources`,
