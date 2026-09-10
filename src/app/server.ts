@@ -21,6 +21,7 @@ import { timingSafeEqual } from "node:crypto";
 import { jobKey, reviewJobFor, type ReviewJob } from "./events.js";
 import { InstallationTokens, verifySignature, type AppCredentials, type Fetch } from "./identity.js";
 import { buildRepoIntoBrain, checkRepoAccess, RepoNotAccessibleError, type BrainBuildJob } from "./brain-build.js";
+import { buildRepoInChildProcess } from "./brain-build-process.js";
 import { PageStore } from "./pages.js";
 import { WorkQueue } from "./queue.js";
 import { reviewInChildProcess } from "./review-process.js";
@@ -223,7 +224,12 @@ export function createApp(
         // The deployment's platform URL wins over anything a caller sends, so a
         // request cannot redirect a repository's history to another host.
         if (config.brainBaseUrl) job.brainBaseUrl = config.brainBaseUrl;
-        const built = await (seams.brainBuild ?? buildRepoIntoBrain)(job, {
+        // Out of this process by default. A read is minutes of blocking work
+        // and the App has to keep answering — including the one-second access
+        // question the next person's onboarding is waiting on. A test that
+        // injects its own builder still runs in-process, which is what a test
+        // wants.
+        const built = await (seams.brainBuild ?? buildRepoInChildProcess)(job, {
           creds: config,
           fetch: fetchImpl,
           api: config.api,

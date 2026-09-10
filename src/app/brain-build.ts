@@ -173,17 +173,90 @@ export async function checkRepoAccess(job: { owner: string; repo: string }, deps
  * both ways is one we genuinely cannot see, and that is the case the UI turns
  * into "read it on your machine".
  */
-export async function buildRepoIntoBrain(
-  job: BrainBuildJob,
-  deps: BrainBuildDeps,
-): Promise<BrainBuildResult> {
+/** Everything the heavy half needs, and nothing it could mint for itself. */
+export interface RepoReadAuth {
+  /** Installation or public-read token, for the GitHub API calls. */
+  token: string;
+  /** Credential for the clone. Empty for a public repository we are not
+   * installed on: git serves those to anyone, and a token minted for another
+   * account is not promised to work on this one. */
+  cloneToken: string;
+  meta: RepoMeta;
+}
+
+/**
+ * Decide how this repository gets read, and mint the credential for it.
+ *
+ * The network half of a build, kept separate from the work: an installation
+ * lookup, a token, a repository lookup. About a second, none of it blocking.
+ *
+ * Throws RepoNotAccessibleError when there is no way in. That is the answer the
+ * onboarding UI turns into a choice, which is why it is raised here — before a
+ * single byte is cloned — rather than discovered somewhere inside the read.
+ */
+export async function resolveRepoRead(job: BrainBuildJob, deps: BrainBuildDeps): Promise<RepoReadAuth> {
+  const api = deps.api ?? "https://api.github.com";
+  const tag = `${job.owner}/${job.repo}`;
+  const installationId = await installationFor(deps.creds, job.owner, job.repo, deps.fetch, (deps.now ?? Date.now)(), api);
+  if (installationId !== null) {
+    const token = await installationToken(deps, installationId, tag, api);
+    const meta = await repoMeta(job.owner, job.repo, token, deps.fetch, api);
+    return { token, cloneToken: token, meta: meta ?? { isPrivate: true, defaultBranch: "" } };
+  }
+
+  // No installation on this repository. That rules out nothing yet: a public
+  // repo clones with no credential at all, and its API answers to any token we
+  // hold. So find a credential for the reading, then ask whether it is public.
+  const token = await publicReadToken(deps, api);
+  const meta = await repoMeta(job.owner, job.repo, token, deps.fetch, api);
+  if (!meta || meta.isPrivate) {
+    // Which of the two gaps it is decides what the UI can offer, so it is
+    // resolved here rather than guessed there.
+    const gap = await repoAccessGap(deps.creds, job.owner, deps.fetch, (deps.now ?? Date.now)(), api);
+    throw new RepoNotAccessibleError(
+      gap.reason === "repo_not_selected"
+        ? `graft is installed on ${job.owner} but ${tag} is not in the list of repositories it can see`
+        : `graft is not installed on ${job.owner}`,
+      gap,
+    );
+  }
+  return { token, cloneToken: "", meta };
+}
+
+/**
+ * Read the repository and hand its history to the brain.
+ *
+ * An installation is the preferred way in: it is the only way into a private
+ * repository, and it carries a rate limit worth having. It is not required for
+ * a public one, though — those clone anonymously and answer the API
+ * anonymously — so a failed installation lookup is a reason to try the open
+ * door, not a reason to stop. Only a repository that is private or unreadable
+ * both ways is one we genuinely cannot see, and that is the case the UI turns
+ * into "read it on your machine".
+ */
+export async function buildRepoIntoBrain(job: BrainBuildJob, deps: BrainBuildDeps): Promise<BrainBuildResult> {
+  return readRepository(job, deps, await resolveRepoRead(job, deps));
+}
+
+/**
+ * The heavy half: clone, graph, history, digest.
+ *
+ * Takes its credential rather than minting one, because this is the half that
+ * runs somewhere else. Every expensive thing in it is synchronous — the git
+ * calls are spawnSync, the parse is a loop of native tree-sitter calls, the
+ * graph is written with a blocking stringify — so in the server process it
+ * holds the event loop for the whole read, and a second person pasting a URL
+ * waits behind the first. See brain-build-process.ts.
+ */
+export async function readRepository(job: BrainBuildJob, deps: BrainBuildDeps, auth: RepoReadAuth): Promise<BrainBuildResult> {
   const rawLog = deps.log ?? ((): void => {});
   const api = deps.api ?? "https://api.github.com";
   const tag = `${job.owner}/${job.repo}`;
+  const { token, cloneToken, meta } = auth;
 
   // Every line carries how long we have been at it. A read that feels slow is
-  // four things in a trench coat — the access check, the clone, the graph
-  // build, the pull-request walk — and without the elapsed time on each, the
+  // four things in a trench coat — the clone, the graph build, the
+  // pull-request walk, the digest — and without the elapsed time on each, the
   // only observation anyone can make is "it took two minutes".
   const startedAt = (deps.now ?? Date.now)();
   const log = (msg: string): void => rawLog(`[+${(((deps.now ?? Date.now)() - startedAt) / 1000).toFixed(1)}s] ${msg}`);
@@ -192,59 +265,12 @@ export async function buildRepoIntoBrain(
     return () => log(`${tag}: ${name} took ${(((deps.now ?? Date.now)() - at) / 1000).toFixed(1)}s`);
   };
 
-  const doneAccess = phase("access check");
-
-  const installationId = await installationFor(
-    deps.creds,
-    job.owner,
-    job.repo,
-    deps.fetch,
-    (deps.now ?? Date.now)(),
-    api,
-  );
-  // Whether the repository is private decides what the UI may show before
-  // signup, and the default branch is not discoverable from a shallow
-  // single-ref fetch (there is no origin/HEAD to resolve), so both are read
-  // from the API rather than guessed.
-  let token = "";
-  let cloneToken: string | null = null;
-  let meta: RepoMeta | null = null;
-  if (installationId !== null) {
-    token = await installationToken(deps, installationId, tag, api);
-    meta = await repoMeta(job.owner, job.repo, token, deps.fetch, api);
-  } else {
-    // No installation on this repository. That rules out nothing yet: a public
-    // repo clones with no credential at all, and its API answers to any token
-    // we hold. So find a credential for the reading, then ask the repo whether
-    // it is in fact public.
-    token = await publicReadToken(deps, api);
-    meta = await repoMeta(job.owner, job.repo, token, deps.fetch, api);
-    if (!meta || meta.isPrivate) {
-      // Which of the two gaps it is decides what the UI can offer, so it is
-      // resolved here rather than guessed there.
-      const gap = await repoAccessGap(deps.creds, job.owner, deps.fetch, (deps.now ?? Date.now)(), api);
-      throw new RepoNotAccessibleError(
-        gap.reason === "repo_not_selected"
-          ? `graft is installed on ${job.owner} but ${tag} is not in the list of repositories it can see`
-          : `graft is not installed on ${job.owner}`,
-        gap,
-      );
-    }
-    log(`${tag}: no installation, reading it as a public repository${token ? "" : " anonymously"}`);
-    // The clone is the one part that stays anonymous. A public repository
-    // serves it to anyone, and a token minted for a different account is not
-    // something git is promised to accept on this one.
-    cloneToken = "";
-  }
-  if (!meta) meta = { isPrivate: true, defaultBranch: "" };
-  doneAccess();
-
   const doneClone = phase("clone");
   const checkout = checkoutRepository({
     owner: job.owner,
     repo: job.repo,
     ref: job.ref || meta.defaultBranch,
-    token: cloneToken ?? token,
+    token: cloneToken,
     api: deps.githubHost,
     log,
   });
