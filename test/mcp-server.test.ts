@@ -188,7 +188,7 @@ const ALL_TOOLS = [
 ];
 
 async function listTools(dir: string): Promise<string[]> {
-  const rs = await rpc(
+  const { responses: rs, stderr } = await rpc(
     [
       { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 't', version: '0' } } },
       { jsonrpc: '2.0', id: 2, method: 'tools/list' },
@@ -196,7 +196,9 @@ async function listTools(dir: string): Promise<string[]> {
     dir,
     2,
   );
-  return rs.find((r) => r.id === 2).result.tools.map((t: any) => t.name);
+  const list = rs.find((r) => r.id === 2);
+  assert.ok(list, `tools/list reply missing. stderr:\n${stderr.slice(0, 1500)}`);
+  return list.result.tools.map((t: { name: string }) => t.name);
 }
 
 test('a built repo advertises every tool', async () => {
