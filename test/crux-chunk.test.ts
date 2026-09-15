@@ -104,6 +104,55 @@ test("#260: a later empty chunk does not wipe earlier summaries or cache the emp
   for (const n of pending) assert.equal(n.summary, null);
 });
 
+test("#260: each chunk's numbered source includes its targets' file-absolute lines", async () => {
+  // numberLines clips 18k chars from the start of the file. Put 80 short
+  // functions in the prefix (chunk 1), then enough padding that a 81st
+  // function sits past that clip. Chunk 2 must still see that late line —
+  // the existing dense-file fixture (`source: "export const x = 1"`) cannot.
+  const n = CRUX_CHUNK_SIZE + 1;
+  const head = Array.from(
+    { length: CRUX_CHUNK_SIZE },
+    (_, i) => `export function f${i}() { return ${i}; }`,
+  );
+  const pad = Array.from({ length: 120 }, () => `// ${"x".repeat(160)}`);
+  const tail = [`export function f${CRUX_CHUNK_SIZE}() { return ${CRUX_CHUNK_SIZE}; }`];
+  const source = [...head, ...pad, ...tail].join("\n") + "\n";
+  const lateLine = head.length + pad.length + 1;
+  const nodes: NodeRef[] = [
+    ...Array.from({ length: CRUX_CHUNK_SIZE }, (_, i) => ({
+      id: `late.ts#f${i}`,
+      kind: "function" as const,
+      signature: `f${i}()`,
+      startLine: i + 1,
+      endLine: i + 1,
+    })),
+    {
+      id: `late.ts#f${CRUX_CHUNK_SIZE}`,
+      kind: "function",
+      signature: `f${CRUX_CHUNK_SIZE}()`,
+      startLine: lateLine,
+      endLine: lateLine,
+    },
+  ];
+  assert.equal(nodes.length, n);
+  assert.ok(source.length > 18_000, "fixture must exceed the per-request source cap");
+
+  const model = new RecordingModel();
+  await new ChatCruxSummarizer(model).describeFile({ path: "late.ts", source, nodes });
+  assert.equal(model.prompts.length, 2, "81 targets must split into two chunks");
+  for (const prompt of model.prompts) {
+    const shown = shownLineNumbers(prompt);
+    const starts = [...prompt.matchAll(/lines L(\d+)-L(\d+)/g)].map((m) => Number(m[1]));
+    assert.ok(starts.length > 0, "chunk must list TARGETS with file-absolute lines");
+    for (const start of starts) {
+      assert.ok(
+        shown.has(start),
+        `target startLine ${start} must appear in this chunk's numbered source (shown ${[...shown].at(0)}–${[...shown].at(-1)})`,
+      );
+    }
+  }
+});
+
 function denseInput(n: number): FileCruxInput {
   return {
     path: "dense.ts",
@@ -228,6 +277,26 @@ class FirstChunkOnlyModel implements ChatModel {
     if (ids.length === 0) return emptyReply();
     return okReply(ids);
   }
+}
+
+/** Records each user prompt so tests can see which numbered source lines went out. */
+class RecordingModel implements ChatModel {
+  readonly label = "fake:record";
+  prompts: string[] = [];
+  async create(req: ChatRequest): Promise<ChatResponse> {
+    this.prompts.push(req.messages.find((m) => m.role === "user")?.content ?? "");
+    return okReply(requestedIds(req));
+  }
+}
+
+function shownLineNumbers(prompt: string): Set<number> {
+  const body = prompt.split("\n\nTARGETS")[0] ?? prompt;
+  const nums = new Set<number>();
+  for (const line of body.split("\n")) {
+    const m = /^(\d+)\t/.exec(line);
+    if (m) nums.add(Number(m[1]));
+  }
+  return nums;
 }
 
 async function withCapturedError<T>(fn: () => Promise<T>): Promise<{ result: T; err: string[] }> {

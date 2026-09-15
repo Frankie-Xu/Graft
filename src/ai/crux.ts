@@ -144,12 +144,32 @@ export function chunkCruxTargets<T>(nodes: readonly T[], size = CRUX_CHUNK_SIZE)
 /** Cap the file text sent per request so one huge file can't blow the context. */
 const MAX_CODE_CHARS = 18_000;
 
-function numberLines(source: string): string {
+/**
+ * Slice `source` to the contiguous file-absolute span of `nodes`. Later chunks
+ * of a dense file must not reuse the file prefix — `numberLines` clips 18k
+ * chars from the start of whatever it is given, so sending the whole file made
+ * chunk N describe symbols it never saw.
+ */
+function sourceWindow(
+  source: string,
+  nodes: readonly Pick<NodeRef, "startLine" | "endLine">[],
+): { text: string; from: number } {
+  if (nodes.length === 0) return { text: source, from: 1 };
+  const lines = source.split("\n");
+  const last = Math.max(1, lines.length);
+  let from = Math.min(...nodes.map((n) => n.startLine));
+  let to = Math.max(...nodes.map((n) => n.endLine));
+  from = Math.max(1, Math.min(from, last));
+  to = Math.max(from, Math.min(to, last));
+  return { text: lines.slice(from - 1, to).join("\n"), from };
+}
+
+function numberLines(source: string, fromLine = 1): string {
   const clipped =
     source.length > MAX_CODE_CHARS ? `${source.slice(0, MAX_CODE_CHARS)}\n… (truncated)` : source;
   return clipped
     .split("\n")
-    .map((line, i) => `${i + 1}\t${line}`)
+    .map((line, i) => `${fromLine + i}\t${line}`)
     .join("\n");
 }
 
@@ -162,7 +182,8 @@ function userContent(input: FileCruxInput): string {
     )
     .join("\n");
   const n = input.nodes.length;
-  return `FILE: ${input.path}\n\n${numberLines(input.source)}\n\nTARGETS (${n} — return all ${n}, one entry per id):\n${targets}`;
+  const { text, from } = sourceWindow(input.source, input.nodes);
+  return `FILE: ${input.path}\n\n${numberLines(text, from)}\n\nTARGETS (${n} — return all ${n}, one entry per id):\n${targets}`;
 }
 
 /** Normalize the tool's parsed argument object into a {@link NodeCrux} list. */
