@@ -153,6 +153,41 @@ test("#260: each chunk's numbered source includes its targets' file-absolute lin
   }
 });
 
+test("#260: a source window over 18k splits even below the target-count cap", async () => {
+  const padding = Array.from({ length: 120 }, () => `// ${"x".repeat(160)}`);
+  const source = ["export function first() {}", ...padding, "export function last() {}"].join("\n");
+  const lateLine = padding.length + 2;
+  const nodes: NodeRef[] = [
+    {
+      id: "sparse.ts#first",
+      kind: "function",
+      signature: "first()",
+      startLine: 1,
+      endLine: 1,
+    },
+    {
+      id: "sparse.ts#last",
+      kind: "function",
+      signature: "last()",
+      startLine: lateLine,
+      endLine: lateLine,
+    },
+  ];
+  assert.ok(nodes.length < CRUX_CHUNK_SIZE, "fixture must stay below the count-only split");
+  assert.ok(source.length > 18_000, "fixture must exceed the per-request source cap");
+
+  const model = new RecordingModel();
+  await new ChatCruxSummarizer(model).describeFile({ path: "sparse.ts", source, nodes });
+
+  assert.equal(model.prompts.length, 2, "source span must split two sparse targets");
+  for (const prompt of model.prompts) {
+    const shown = shownLineNumbers(prompt);
+    const starts = [...prompt.matchAll(/lines L(\d+)-L(\d+)/g)].map((m) => Number(m[1]));
+    assert.equal(starts.length, 1);
+    assert.ok(shown.has(starts[0]), `target line ${starts[0]} must be visible in its chunk`);
+  }
+});
+
 function denseInput(n: number): FileCruxInput {
   return {
     path: "dense.ts",

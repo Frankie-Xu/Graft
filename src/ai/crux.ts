@@ -164,6 +164,31 @@ function sourceWindow(
   return { text: lines.slice(from - 1, to).join("\n"), from };
 }
 
+/**
+ * Pack targets until either the response-size limit or the visible source
+ * window would be exceeded. Count-only chunks can still span more than 18k
+ * characters when symbols are sparse, causing `numberLines` to hide the later
+ * targets in an otherwise successful request.
+ */
+function chunkCruxInput(input: FileCruxInput): NodeRef[][] {
+  const chunks: NodeRef[][] = [];
+  let chunk: NodeRef[] = [];
+  for (const node of input.nodes) {
+    const candidate = [...chunk, node];
+    if (
+      chunk.length > 0 &&
+      (candidate.length > CRUX_CHUNK_SIZE ||
+        sourceWindow(input.source, candidate).text.length > MAX_CODE_CHARS)
+    ) {
+      chunks.push(chunk);
+      chunk = [];
+    }
+    chunk.push(node);
+  }
+  if (chunk.length > 0) chunks.push(chunk);
+  return chunks;
+}
+
 function numberLines(source: string, fromLine = 1): string {
   const clipped =
     source.length > MAX_CODE_CHARS ? `${source.slice(0, MAX_CODE_CHARS)}\n… (truncated)` : source;
@@ -236,7 +261,7 @@ export class ChatCruxSummarizer implements CruxSummarizer {
     const seen = new Set<string>();
     let miss: CruxMiss | null = null;
 
-    for (const nodes of chunkCruxTargets(input.nodes)) {
+    for (const nodes of chunkCruxInput(input)) {
       const { parsed, res } = await this.describeChunk({ ...input, nodes });
       if (isTruncatedStop(res.stopReason)) {
         warnCruxTruncated(input.path, nodes.length, parsed.length, res.stopReason);
