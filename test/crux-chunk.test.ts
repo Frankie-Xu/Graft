@@ -188,6 +188,67 @@ test("#260: a source window over 18k splits even below the target-count cap", as
   }
 });
 
+test("#260: source window splits strictly above 18k, including reversed targets", async () => {
+  for (const length of [18_000, 18_001]) {
+    for (const reversed of [false, true]) {
+      const source = ["a", "x".repeat(length - 4), "z"].join("\n");
+      assert.equal(source.length, length);
+      const nodes: NodeRef[] = [
+        { ...ref(0), startLine: 1, endLine: 1 },
+        { ...ref(1), startLine: 3, endLine: 3 },
+      ];
+      if (reversed) nodes.reverse();
+      const model = new RecordingModel();
+      const out = await new ChatCruxSummarizer(model).describeFile({ path: "boundary.ts", source, nodes });
+      assert.equal(model.prompts.length, length === 18_000 ? 1 : 2);
+      assert.deepEqual(out.map((n) => n.id), nodes.map((n) => n.id));
+      for (const prompt of model.prompts) {
+        assert.ok(!prompt.includes("… (truncated)"));
+        const shown = shownLineNumbers(prompt);
+        for (const match of prompt.matchAll(/lines L(\d+)-L(\d+)/g)) {
+          assert.ok(shown.has(Number(match[1])));
+        }
+      }
+    }
+  }
+});
+
+test("#260: an oversized single target stays clipped but does not hide the next target", async () => {
+  const source = ["export function huge() {", "x".repeat(18_100), "}", "export function next() {}"].join("\n");
+  const nodes: NodeRef[] = [
+    { ...ref(0), startLine: 1, endLine: 3 },
+    { ...ref(1), startLine: 4, endLine: 4 },
+  ];
+  const model = new RecordingModel();
+  await new ChatCruxSummarizer(model).describeFile({ path: "huge.ts", source, nodes });
+  assert.equal(model.prompts.length, 2);
+  assert.ok(model.prompts[0].includes("… (truncated)"));
+  assert.ok(!model.prompts[0].includes("3\t}"), "oversized target's tail remains outside the clip");
+  assert.ok(model.prompts[1].includes("4\texport function next() {}"));
+});
+
+test("#260: empty target input makes no request and clears an earlier miss", async () => {
+  const model = new RecordingModel();
+  const summarizer = new ChatCruxSummarizer(model);
+  summarizer.lastMiss = { kind: "empty-toolCalls", finishReason: "stop" };
+  assert.deepEqual(await summarizer.describeFile(denseInput(0)), []);
+  assert.equal(model.prompts.length, 0);
+  assert.equal(summarizer.lastMiss, null);
+});
+
+test("#260: duplicate results across source windows are merged once", async () => {
+  const source = ["a", "x".repeat(18_000), "z"].join("\n");
+  const nodes: NodeRef[] = [
+    { ...ref(0), startLine: 1, endLine: 1 },
+    { ...ref(0), startLine: 3, endLine: 3 },
+  ];
+  const model = new RecordingModel();
+  const out = await new ChatCruxSummarizer(model).describeFile({ path: "duplicate.ts", source, nodes });
+  assert.equal(model.prompts.length, 2);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, nodes[0].id);
+});
+
 function denseInput(n: number): FileCruxInput {
   return {
     path: "dense.ts",
