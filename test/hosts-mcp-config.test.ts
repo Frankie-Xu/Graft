@@ -164,3 +164,49 @@ test('stripTomlSection leaves files without graft untouched', () => {
   assert.equal(found, false);
   assert.equal(rest, text, 'byte-identical');
 });
+
+test('stripTomlSection removes non-contiguous family tables', () => {
+  const text = [
+    '[mcp_servers.other]',
+    'command = "x"',
+    '',
+    '[mcp_servers.graft]',
+    'command = "graft"',
+    '',
+    '[mcp_servers.graft2]',
+    'command = "y"',
+    '',
+    '[mcp_servers.graft.env]',
+    'DO_NOT_TRACK = "1"',
+    '',
+    '[mcp_servers.graft.foo.bar]',
+    'Z = "2"',
+    '',
+    '[other.graft]',
+    'command = "z"',
+    '',
+  ].join('\n');
+  const { rest, found } = stripTomlSection(text);
+  assert.equal(found, true);
+  assert.ok(!rest.includes('mcp_servers.graft]'), 'no graft residue');
+  assert.ok(!rest.includes('mcp_servers.graft.'), 'no graft subtable residue');
+  assert.ok(!rest.includes('DO_NOT_TRACK'), 'subtable content gone');
+  assert.ok(rest.includes('[mcp_servers.other]'), 'other preserved');
+  assert.ok(rest.includes('[mcp_servers.graft2]'), 'graft2 preserved');
+  assert.ok(rest.includes('[other.graft]'), 'other.graft preserved');
+});
+
+test('stripTomlSection removes orphan-only subtable without parent', () => {
+  const text = [
+    '[mcp_servers.other]',
+    'command = "x"',
+    '',
+    '[mcp_servers.graft.env]',
+    'DO_NOT_TRACK = "1"',
+    '',
+  ].join('\n');
+  const { rest, found } = stripTomlSection(text);
+  assert.equal(found, true);
+  assert.ok(!rest.includes('mcp_servers.graft'), 'orphan gone');
+  assert.ok(rest.includes('[mcp_servers.other]'), 'foreign preserved');
+});

@@ -95,39 +95,39 @@ export function mergeJsonKey(id: string, path: string, topKey: string, entry: ob
 const TOML_HEADER = '[mcp_servers.graft]';
 
 /**
- * Remove the `[mcp_servers.graft]` table from a TOML config, returning the rest.
+ * Remove every canonical graft-owned table from a TOML config, returning the rest.
  *
  * Line-based on purpose: a real parse-and-reserialize would reformat the user's
- * whole file. The table runs from its header through its dotted subtables
- * (`[mcp_servers.graft.*]`, which TOML scopes under the parent) to the next
- * unrelated `[`-header or EOF, which is exactly the shape {@link upsertCodexToml}
- * appends. Exported so the writer and `retract.ts` can never disagree about
- * what "graft's section" means.
+ * whole file. A graft-owned table is `[mcp_servers.graft]` itself or any dotted
+ * subtable below it (`[mcp_servers.graft.*]`, which TOML scopes under the
+ * parent) — wherever it appears in the file, contiguous or not, and even when
+ * the parent is gone and only an orphaned subtable remains. Anything else
+ * starting a new table (`[mcp_servers.other]`, `[mcp_servers.graft2]`,
+ * `[other.graft]`) is foreign and preserved. Exported so the writer and
+ * `retract.ts` can never disagree about what "graft's section" means.
  */
 export function stripTomlSection(text: string): { rest: string; found: boolean } {
   const lines = text.split('\n');
-  const start = lines.findIndex((l) => l.trim() === TOML_HEADER);
-  if (start === -1) return { rest: text, found: false };
-  // A dotted subtable (`[mcp_servers.graft.env]`) belongs to the parent table
-  // and must go with it; anything else starting a new table ends the section.
   // The trailing dot keeps similarly-named tables (`[mcp_servers.graft2]`,
   // `[other.graft]`) out of the family.
   const familyPrefix = `${TOML_HEADER.slice(0, -1)}.`;
-  let end = start + 1;
-  while (end < lines.length) {
-    const trimmed = lines[end].trimStart();
-    if (!trimmed.startsWith('[')) {
-      end++;
-      continue;
-    }
+  const isFamilyHeader = (line: string): boolean => {
+    const trimmed = line.trimStart();
+    if (!trimmed.startsWith('[')) return false;
     const header = trimmed.split(/\s+/)[0];
-    if (header === TOML_HEADER || header.startsWith(familyPrefix)) {
-      end++;
-      continue;
+    return header === TOML_HEADER || header.startsWith(familyPrefix);
+  };
+  if (!lines.some(isFamilyHeader)) return { rest: text, found: false };
+  let inGraft = false;
+  const kept: string[] = [];
+  for (const line of lines) {
+    if (line.trimStart().startsWith('[')) {
+      inGraft = isFamilyHeader(line);
+      if (inGraft) continue;
     }
-    break;
+    if (!inGraft) kept.push(line);
   }
-  const rest = [...lines.slice(0, start), ...lines.slice(end)]
+  const rest = kept
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/^\n+/, '');

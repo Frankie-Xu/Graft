@@ -349,3 +349,13 @@ test('[mcp_servers.graft.env] orphan does not survive retract', () => {
   assert.ok(!text.includes('mcp_servers.graft'), 'no graft residue of any depth');
   assert.ok(text.includes('[mcp_servers.keepme]'), 'foreign table preserved');
 });
+
+test('orphan-only graft subtable is removed by retract', () => {
+  const d = fresh();
+  const toml = write(d, join('.grok', 'config.toml'),
+    '[mcp_servers.other]\ncommand = "x"\n\n[mcp_servers.graft.env]\nDO_NOT_TRACK = "1"\n');
+  runRetract(d, { apply: true, global: false });
+  const text = readFileSync(toml, 'utf8');
+  assert.ok(!text.includes('mcp_servers.graft'), 'orphan gone via uninstall path');
+  assert.ok(text.includes('[mcp_servers.other]'), 'foreign preserved');
+});
