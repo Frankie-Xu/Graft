@@ -1,6 +1,7 @@
 /**
- * `graft claude-md pull`: write the CLAUDE.md changes accepted in Trail into
- * this checkout's instruction file.
+ * The CLAUDE.md half of `graft trail pull` (and of `graft claude-md pull`, its
+ * old name): write the CLAUDE.md changes accepted in Trail into this checkout's
+ * instruction file.
  *
  * Trail compares the repository's CLAUDE.md with what its history says and
  * suggests edits and new sections; a person accepts some of them on the brain's
@@ -50,7 +51,7 @@ export interface ApplyResult {
 export async function fetchAcceptedChanges(
   link: BrainLink,
   fetchImpl: typeof fetch = fetch,
-): Promise<ClaudeMdPull | { error: string }> {
+): Promise<ClaudeMdPull | { error: string; unsupported?: boolean; status?: number }> {
   const url = `${baseUrlFor(link)}/api/public/brains/${encodeURIComponent(link.brainId)}/claude-md`;
   try {
     const res = await fetchImpl(url, {
@@ -59,9 +60,11 @@ export async function fetchAcceptedChanges(
     });
     const body = await res.text();
     if (res.status === 404 || res.status === 503) {
-      return { error: "this brain has no CLAUDE.md suggestions yet — its Trail may be older than the feature" };
+      return { error: "this trail has no CLAUDE.md suggestions yet — its Trail may be older than the feature", unsupported: true };
     }
-    if (!res.ok) return { error: `Trail refused the pull: ${res.status} ${body.slice(0, 200)}` };
+    // The status rides along so a watcher can tell a revoked token, which no
+    // amount of waiting fixes, from a server having a bad minute.
+    if (!res.ok) return { error: `Trail refused the pull: ${res.status} ${body.slice(0, 200)}`, status: res.status };
     const parsed = JSON.parse(body) as Partial<ClaudeMdPull>;
     return { path: parsed.path ?? "", head_sha: parsed.head_sha ?? "", changes: parsed.changes ?? [] };
   } catch (e) {
