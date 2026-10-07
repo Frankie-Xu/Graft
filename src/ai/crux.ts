@@ -204,17 +204,22 @@ function longestMatch(requested: readonly string[], test: (id: string) => boolea
  * When several requested ids qualify, the longest wins.
  */
 export function resolveTargetId(raw: string, requested: readonly string[]): string | null {
-  const id = raw.trim();
-  if (requested.includes(id)) return id;
-  const echoed = longestMatch(requested, (r) => id.startsWith(`${r} | `));
+  // Whitespace can belong to a path/target ID. Try verbatim text before the
+  // forgiving trim fallback, while retaining each rule's priority.
+  const variants = [raw, raw.trim()];
+  const exact = variants.find((id) => requested.includes(id));
+  if (exact !== undefined) return exact;
+  const echoed = longestMatch(requested, (r) => variants.some((id) => id.startsWith(`${r} | `)));
   if (echoed) return echoed;
-  if (id.startsWith("id=")) {
-    const bare = id.slice(3).trim();
-    if (requested.includes(bare)) return bare;
-    const bareEchoed = longestMatch(requested, (r) => bare.startsWith(`${r} | `));
-    if (bareEchoed) return bareEchoed;
-  }
-  return longestMatch(requested, (r) => id.endsWith(` | id=${r}`));
+  const bare = variants.filter((id) => id.startsWith("id=")).flatMap((id) => {
+    const value = id.slice(3);
+    return [value, value.trim()];
+  });
+  const bareExact = longestMatch(requested, (r) => bare.includes(r));
+  if (bareExact !== null) return bareExact;
+  const bareEchoed = longestMatch(requested, (r) => bare.some((id) => id.startsWith(`${r} | `)));
+  if (bareEchoed) return bareEchoed;
+  return longestMatch(requested, (r) => variants.some((id) => id.endsWith(` | id=${r}`)));
 }
 
 /**

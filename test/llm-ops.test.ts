@@ -163,6 +163,24 @@ test("resolveTargetId takes the longest requested id when several qualify", () =
   assert.equal(resolveTargetId("a.ts#fg | function", requested), null);
 });
 
+test("resolveTargetId preserves whitespace belonging to requested IDs", () => {
+  for (const target of [" leading.ts#run", "a.ts#trailing ", " both "]) {
+    const requested = [target];
+    for (const raw of [target, `${target} | function | lines L1-L3`, `id=${target}`,
+      `id=${target} | function | lines L1-L3`, `- function | lines L1-L3 | id=${target}`]) {
+      assert.equal(resolveTargetId(raw, requested), target, JSON.stringify(raw));
+    }
+  }
+  assert.equal(resolveTargetId("  id=  a.ts#run  ", ["a.ts#run"]), "a.ts#run");
+  assert.equal(resolveTargetId("  a.ts#run | function  ", ["a.ts#run"]), "a.ts#run");
+});
+
+test("resolveTargetId takes the longest exact ID after id= whitespace fallbacks", () => {
+  for (const requested of [["leading.ts", " leading.ts"], [" leading.ts", "leading.ts"]]) {
+    assert.equal(resolveTargetId("id= leading.ts ", requested), " leading.ts");
+  }
+});
+
 test("structured ops degrade gracefully when the model returns no tool call", async () => {
   const empty = new FakeChatModel({ toolCalls: [] });
   const { err } = await withCapturedError(async () => {

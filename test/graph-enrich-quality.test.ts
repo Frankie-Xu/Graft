@@ -13,6 +13,7 @@ import { LlmFailureGate } from "../src/ai/failure.js";
 import type { CruxSummarizer, FileCruxInput, NodeCrux } from "../src/ai/crux.js";
 import type { ChatModel, ChatRequest, ChatResponse, ToolCall } from "../src/ai/llm/types.js";
 import type { NodeV1 } from "../src/graph/types.js";
+import { extractFile } from "../src/graph/extract.js";
 
 class EmptyCrux implements CruxSummarizer {
   calls = 0;
@@ -209,4 +210,34 @@ test("#259: unmatched ids name id-mismatch with the returned id, and never reach
       `\n    first of 1 returned id(s): ${JSON.stringify(invented)}`,
   );
   assert.equal(nodes[0].summary_state, "pending");
+});
+
+test("#259: old-row echoes preserve a supported filename's leading whitespace", async () => {
+  const path = " leading.ts";
+  const source = "export function run() {\n  return 1;\n}\n";
+  const { nodes } = extractFile(path, source, "typescript");
+  let calls = 0;
+  const model: ChatModel = {
+    label: "fake:whitespace-path",
+    async create() {
+      calls++;
+      return {
+        text: "",
+        toolCalls: [{ id: "1", name: "record_symbols", args: { symbols: nodes.map((n) => ({
+          id: `${n.id} | ${n.kind} | lines L1-L3`, summary: "a useful purpose", crux_start: 0, crux_end: 0,
+        })) } }],
+        usage: { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
+        stopReason: "tool_calls",
+        assistant: { role: "assistant", content: "" },
+      };
+    },
+  };
+  const stats = await enrichGraph(nodes, new Map(), new Map([[path, source]]), {
+    summarizer: new ChatCruxSummarizer(model), concurrency: 1,
+  });
+  assert.equal(nodes.length, 2);
+  assert.equal(calls, 1, "decorated exact IDs need no retry");
+  assert.equal(stats.computed, nodes.length);
+  assert.equal(stats.failedFiles, 0);
+  for (const n of nodes) assert.equal(n.summary_state, "ready");
 });
