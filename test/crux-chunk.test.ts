@@ -249,6 +249,67 @@ test("#260: duplicate results across source windows are merged once", async () =
   assert.equal(out[0].id, nodes[0].id);
 });
 
+test("#260: a later provider failure keeps completed chunks and reports the error", async () => {
+  const { nodes, sources } = denseNodes(CRUX_CHUNK_SIZE + 1);
+  const model = new LaterChunkFailureModel("503 upstream unavailable");
+  const stats = await enrichGraph(nodes, new Map(), sources, {
+    summarizer: new ChatCruxSummarizer(model), concurrency: 1,
+  });
+
+  assert.equal(model.calls, 2, "provider failure must end retries for this file");
+  assert.equal(stats.computed, CRUX_CHUNK_SIZE, "completed chunks must be retained");
+  assert.equal(stats.pending, 1);
+  assert.equal(stats.failedFiles, 1);
+  assert.equal(stats.fatal, undefined);
+  assert.match(stats.errors[0], /503 upstream unavailable/);
+  assert.equal(nodes.filter((n) => n.summary_state === "ready").length, CRUX_CHUNK_SIZE);
+  assert.equal(nodes.at(-1)?.summary_state, "pending");
+});
+
+test("#260: a later quota rejection keeps completed chunks and stops remaining files", async () => {
+  const { nodes, sources } = denseNodes(CRUX_CHUNK_SIZE + 1);
+  const later = { ...nodes[0], id: "later.ts#run", name: "run", path: "later.ts" };
+  nodes.push(later);
+  sources.set(later.path, "export function run() {}\n");
+  const model = new LaterChunkFailureModel("429 quota exhausted");
+  const stats = await enrichGraph(nodes, new Map(), sources, {
+    summarizer: new ChatCruxSummarizer(model), concurrency: 1,
+  });
+
+  assert.equal(model.calls, 2, "quota rejection must not issue further chunk, retry, or file calls");
+  assert.equal(stats.computed, CRUX_CHUNK_SIZE);
+  assert.equal(stats.pending, 2);
+  assert.equal(stats.failedFiles, 1);
+  assert.equal(stats.skippedFiles, 1);
+  assert.match(stats.fatal ?? "", /quota\/credit for this key is exhausted/);
+  assert.match(stats.errors[0], /429 quota exhausted/);
+  assert.equal(nodes.filter((n) => n.summary_state === "ready").length, CRUX_CHUNK_SIZE);
+  assert.equal(later.summary_state, "pending");
+
+  const resumed = nodes.map((n) => ({ ...n, summary_state: "pending" as const, summary: null, crux: null }));
+  const recovery = new CeilingModel();
+  const recovered = await enrichGraph(resumed, new Map(nodes.map((n) => [n.id, n])), sources, {
+    summarizer: new ChatCruxSummarizer(recovery), concurrency: 1,
+  });
+  assert.equal(recovered.cached, CRUX_CHUNK_SIZE, "completed chunks must be reused on the next build");
+  assert.equal(recovered.computed, 2);
+  assert.equal(recovered.pending, 0);
+  assert.deepEqual(recovery.sizes, [1, 1], "only pending symbols should be requested after recovery");
+});
+
+/** A completed first chunk followed by a provider error, rather than an empty reply. */
+class LaterChunkFailureModel implements ChatModel {
+  readonly label = "fake:later-failure";
+  calls = 0;
+  private readonly message: string;
+  constructor(message: string) { this.message = message; }
+  async create(req: ChatRequest): Promise<ChatResponse> {
+    this.calls++;
+    if (this.calls > 1) throw new Error(this.message);
+    return okReply(requestedIds(req));
+  }
+}
+
 function denseInput(n: number): FileCruxInput {
   return {
     path: "dense.ts",

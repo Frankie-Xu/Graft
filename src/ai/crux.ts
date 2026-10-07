@@ -43,6 +43,17 @@ export interface NodeCrux {
   crux_end: number;
 }
 
+/** A provider failure after earlier chunks returned; preserve both results and the error. */
+export class CruxChunkError extends Error {
+  readonly partialResults: NodeCrux[];
+
+  constructor(partialResults: readonly NodeCrux[], cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "CruxChunkError";
+    this.partialResults = [...partialResults];
+  }
+}
+
 export interface CruxSummarizer {
   describeFile(input: FileCruxInput): Promise<NodeCrux[]>;
   /** Set by {@link ChatCruxSummarizer} after each call; optional on fakes. */
@@ -262,7 +273,10 @@ export class ChatCruxSummarizer implements CruxSummarizer {
     let miss: CruxMiss | null = null;
 
     for (const nodes of chunkCruxInput(input)) {
-      const { parsed, res } = await this.describeChunk({ ...input, nodes });
+      const { parsed, res } = await this.describeChunk({ ...input, nodes }).catch((cause: unknown) => {
+        if (merged.length > 0) throw new CruxChunkError(merged, cause);
+        throw cause;
+      });
       if (isTruncatedStop(res.stopReason)) {
         warnCruxTruncated(input.path, nodes.length, parsed.length, res.stopReason);
       }
