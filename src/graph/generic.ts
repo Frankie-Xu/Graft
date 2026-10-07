@@ -518,6 +518,10 @@ function nextNamedSibling(n: TsNode): TsNode | null {
   return null;
 }
 function defScope(node: TsNode, langName?: string): TsNode {
+  // OCaml queries capture complete individual bindings. Expanding to their
+  // shared declaration would collapse `let rec ... and ...` and grouped types
+  // or modules onto one span, losing later symbols and their call ownership.
+  if (langName === "ocaml") return node;
   let n = node;
   while (n.parent && DEF_CONTAINER.test(n.parent.type)) n = n.parent;
   // Dart's grammar leaves `function_signature` / `method_signature` as a sibling

@@ -24,14 +24,14 @@
   body: [(fun_expression) (function_expression)]) @definition.function
 
 (module_definition
-  (module_binding (module_name) @name)) @definition.module
+  (module_binding (module_name) @name) @definition.module)
 
 (type_definition
   (type_binding
     name: [
       (type_constructor) @name
       (type_constructor_path (type_constructor) @name)
-    ])) @definition.type
+    ]) @definition.type)
 
 ; `helper 2`, `M.inner x` (bare name is the last `value_name`)
 (application_expression
