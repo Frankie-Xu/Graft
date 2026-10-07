@@ -401,9 +401,9 @@ function tagsExtract(
       // Zig test labels can contain escapes, which split into several
       // string_content nodes. Use the whole string's inner source spelling so
       // escaped labels stay complete and ordinary labels keep their names.
-      const name = langName === "zig" && cap[defKey].type === "test_declaration" && cap.name.type === "string"
-        ? cap.name.text.slice(1, -1) : cap.name.text;
-      mkDef(name, KIND[defKey.slice("definition.".length)] ?? "function", defScope(cap[defKey], langName));
+      const zigTest = langName === "zig" && cap[defKey].type === "test_declaration" && cap.name.type === "string";
+      const name = zigTest ? cap.name.text.slice(1, -1) : cap.name.text;
+      if (!zigTest || name) mkDef(name, KIND[defKey.slice("definition.".length)] ?? "function", defScope(cap[defKey], langName));
     }
     if (("reference.call" in cap || "reference.send" in cap) && cap.name)
       calls.push({ name: cap.name.text, at: cap.name.startIndex });

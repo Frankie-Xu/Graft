@@ -541,6 +541,7 @@ test("Zig named tests preserve the complete source spelling of escaped labels", 
   await warmGenericGrammars(["zig"]);
   const source = String.raw`fn helper() void {}
 test "quoted \"name\"" { helper(); }
+test "" {}
 `;
   const name = String.raw`quoted \"name\"`;
   const { nodes, rawEdges } = extractGeneric("src/labels.zig", source, "zig");
