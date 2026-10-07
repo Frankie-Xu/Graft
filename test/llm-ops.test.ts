@@ -180,6 +180,7 @@ test("#253: recoverToolArgsFromContent accepts a bare item array (no tool envelo
     recoverToolArgsFromContent("```json\n" + JSON.stringify(items) + "\n```", RECOVER_OPTS)?.nodes,
     items,
   );
+  assert.deepEqual(recoverToolArgsFromContent("Response:\n" + JSON.stringify(items), RECOVER_OPTS)?.nodes, items);
   const cruxItems = [CRUX_ITEM, { id: "a.ts#login", summary: "logs in", crux_start: 50, crux_end: 55 }];
   assert.deepEqual(recoverToolArgsFromContent(JSON.stringify(cruxItems), CRUX_OPTS)?.symbols, cruxItems);
 });
@@ -204,6 +205,26 @@ test("#253: recoverToolArgsFromContent repairs truncated JSON at a complete obje
   };
   const truncatedNested = `[${JSON.stringify(nested)},{"name":"Api","summary":`;
   assert.deepEqual(recoverToolArgsFromContent(truncatedNested, RECOVER_OPTS)?.nodes, [nested]);
+});
+
+test("#253: truncation inside a trailing item's nested objects keeps only complete items", () => {
+  const partial = '{"name":"Api","type":"system","summary":"s","sources":["b.ts"],"links":[{"to":"Auth","relation":"depends_on"},';
+  for (const prefix of ["[", '{"nodes":[', '[{"name":"record_graph","parameters":{"nodes":[']) {
+    assert.deepEqual(
+      recoverToolArgsFromContent(prefix + JSON.stringify(BARE_NODE) + "," + partial, RECOVER_OPTS)?.nodes,
+      [BARE_NODE],
+      "must not invent the closing delimiters of a partially emitted payload item",
+    );
+    assert.equal(recoverToolArgsFromContent(prefix + partial, RECOVER_OPTS), undefined);
+  }
+});
+
+test("#253: bare-array recovery does not bypass a rejected tool envelope", () => {
+  const wrongTool = { name: "other_tool", parameters: { nodes: [BARE_NODE] } };
+  for (const prefix of ["", "Response:\n"]) {
+    assert.equal(recoverToolArgsFromContent(prefix + JSON.stringify(wrongTool), RECOVER_OPTS), undefined);
+    assert.equal(recoverToolArgsFromContent(prefix + JSON.stringify(wrongTool).slice(0, -2), RECOVER_OPTS), undefined);
+  }
 });
 
 test("#253: unrepairable truncation still fails without guessing", () => {

@@ -38,8 +38,8 @@ type PayloadFn = (value: unknown) => Record<string, unknown> | undefined;
  * already balanced, still inside a string, mismatched, or too deep to close.
  * Linear in `head.length`; no regex.
  */
-function closersFor(head: string): string | undefined {
-  const stack: Array<"}" | "]"> = [];
+function closersFor(head: string): { closers: string; arrayStart: number } | undefined {
+  const stack: Array<{ closer: "}" | "]"; start: number }> = [];
   let inString = false;
   let escape = false;
   for (let i = 0; i < head.length; i++) {
@@ -60,27 +60,31 @@ function closersFor(head: string): string | undefined {
       inString = true;
       continue;
     }
-    if (c === "{") stack.push("}");
-    else if (c === "[") stack.push("]");
+    if (c === "{") stack.push({ closer: "}", start: i });
+    else if (c === "[") stack.push({ closer: "]", start: i });
     else if (c === "}" || c === "]") {
       const want = stack.pop();
-      if (want !== c) return undefined;
+      if (want?.closer !== c) return undefined;
     }
   }
   if (inString) return undefined;
   if (stack.length === 0 || stack.length > MAX_REPAIR_CLOSERS) return undefined;
+  // A complete payload item ends directly inside an array, not inside an
+  // unfinished outer object. The caller also verifies this is the payload array.
+  const parent = stack[stack.length - 1]!;
+  if (parent.closer !== "]") return undefined;
   let closers = "";
-  for (let i = stack.length - 1; i >= 0; i--) closers += stack[i];
-  return closers;
+  for (let i = stack.length - 1; i >= 0; i--) closers += stack[i]!.closer;
+  return { closers, arrayStart: parent.start };
 }
 
 /**
  * After `JSON.parse` of the whole string / `{…}` / `[…]` slices fail, keep
  * complete objects by cutting at a `}` that is not inside a string and
  * appending only `]` / `}`. Does not close dangling quotes (that would guess
- * a truncated value). Linear scans; at most {@link MAX_REPAIR_CUTS} parses.
+ * a truncated value). Linear scans; at most {@link MAX_REPAIR_CUTS} repair attempts.
  */
-function tryRepairedPayload(stripped: string, asPayload: PayloadFn): Record<string, unknown> | undefined {
+function tryRepairedPayload(stripped: string, asPayload: PayloadFn, payloadKey: string): Record<string, unknown> | undefined {
   const cuts: number[] = [];
   let inString = false;
   let escape = false;
@@ -107,11 +111,15 @@ function tryRepairedPayload(stripped: string, asPayload: PayloadFn): Record<stri
   const from = Math.max(0, cuts.length - MAX_REPAIR_CUTS);
   for (let k = cuts.length - 1; k >= from; k--) {
     const head = stripped.slice(0, cuts[k]! + 1);
-    const closers = closersFor(head);
-    if (closers === undefined) continue;
+    const repair = closersFor(head);
+    if (repair === undefined) continue;
     try {
-      const hit = asPayload(JSON.parse(head + closers));
-      if (hit) return hit;
+      const hit = asPayload(JSON.parse(head + repair.closers));
+      // Nested arrays (e.g. a partially emitted node's links) may also end in
+      // a complete object. Accept only when this array is the recovered payload,
+      // so none of its item-closing braces were invented by the repair.
+      const completeItems = JSON.parse(head.slice(repair.arrayStart) + "]");
+      if (hit && JSON.stringify(hit[payloadKey]) === JSON.stringify(completeItems)) return hit;
     } catch {
       /* earlier complete object */
     }
@@ -178,24 +186,27 @@ export function recoverToolArgsFromContent(
   };
 
   try {
-    const hit = asPayload(JSON.parse(stripped));
-    if (hit) return hit;
+    return asPayload(JSON.parse(stripped));
   } catch {
     /* try a bracket slice below */
   }
   const objStart = stripped.indexOf("{");
   const objEnd = stripped.lastIndexOf("}");
+  const arrStart = stripped.indexOf("[");
   if (objStart >= 0 && objEnd > objStart) {
     try {
       const hit = asPayload(JSON.parse(stripped.slice(objStart, objEnd + 1)));
       if (hit) return hit;
+      // When the first opener is an array this slice may be its first item;
+      // repair still needs to close the outer array after that item.
+      if (arrStart < 0 || objStart < arrStart) return undefined;
     } catch {
       /* try array slice */
     }
   }
-  const arrStart = stripped.indexOf("[");
   const arrEnd = stripped.lastIndexOf("]");
-  if (arrStart >= 0 && arrEnd > arrStart) {
+  // A nested array must not bypass a tool envelope (including a truncated one).
+  if (arrStart >= 0 && (objStart < 0 || arrStart < objStart) && arrEnd > arrStart) {
     try {
       const hit = asPayload(JSON.parse(stripped.slice(arrStart, arrEnd + 1)));
       if (hit) return hit;
@@ -203,7 +214,7 @@ export function recoverToolArgsFromContent(
       /* truncated — repair below */
     }
   }
-  return tryRepairedPayload(stripped, asPayload);
+  return tryRepairedPayload(stripped, asPayload, opts.payloadKey);
 }
 
 /** One stderr line when a structured op got neither a tool call nor recoverable JSON. */
