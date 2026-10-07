@@ -99,7 +99,7 @@ export function runInit(
   // hosts/claude-global.ts for the failure that motivates it. Gated on the same
   // flag `registerMcpConfigs` uses, so `--no-global` still means "nothing outside
   // this repo".
-  const global = opts.global === false ? [] : installClaudeGlobal(opts.home ?? homedir(), { runner: opts.runner });
+  const global = opts.global === false ? [] : installClaudeGlobal(opts.home ?? homedir(), { runner: opts.runner, cwd: dir });
 
   const built = buildGraphIfMissing(dir, opts);
   return { settingsPath, shims: [sl, hk], skill: skillPath, mcp, global, warnings, built };

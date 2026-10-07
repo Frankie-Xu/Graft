@@ -90,7 +90,7 @@ function upsertGlobalHooks(id: string, path: string, helpers: string): GlobalWri
  * Best-effort by contract, like every other writer here: a failure is reported as an
  * action, never raised, so a bad `~/.claude.json` can't fail a `graft init`.
  */
-export function installClaudeGlobal(home: string, opts: { runner?: PackageRunner } = {}): GlobalWrite[] {
+export function installClaudeGlobal(home: string, opts: { runner?: PackageRunner; cwd?: string } = {}): GlobalWrite[] {
   const [shim, settings, mcp] = claudeGlobalTargets(home);
   const out: GlobalWrite[] = [];
 
@@ -116,7 +116,7 @@ export function installClaudeGlobal(home: string, opts: { runner?: PackageRunner
   }
 
   try {
-    out.push(mergeJsonKey(mcp.id, mcp.path, 'mcpServers', serverEntry({ runner: opts.runner })));
+    out.push(mergeJsonKey(mcp.id, mcp.path, 'mcpServers', serverEntry({ runner: opts.runner, cwd: opts.cwd })));
   } catch {
     out.push({ id: mcp.id, path: mcp.path, action: 'skipped-unparseable' });
   }

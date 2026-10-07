@@ -39,7 +39,8 @@ export interface McpTarget extends PlannedWrite {
  *   1. `--runner` (explicit, always wins)
  *   2. `GRAFT_MCP_NPX=1` (escape hatch / test pin → npx)
  *   3. lockfile in the repo: bun.lock(b) → bunx, pnpm-lock.yaml → pnpm dlx,
- *      yarn.lock → yarn dlx. A bun/pnpm/yarn repo's committed config should
+ *      modern yarn.lock → yarn dlx. Yarn Classic has no dlx and keeps the
+ *      installed-binary / npx fallback. A bun/pnpm/yarn repo's committed config should
  *      spawn that runner, even if the person who ran `graft init` has `graft`
  *      on PATH — otherwise teammates without a global install (or without npm)
  *      inherit a command that cannot run.
@@ -74,12 +75,27 @@ export function isPackageRunner(value: string): value is PackageRunner {
   return (PACKAGE_RUNNERS as readonly string[]).includes(value);
 }
 
-/** bun.lock(b) > pnpm-lock.yaml > yarn.lock > npx. package-lock.json is npx. */
+/** bun.lock(b) > pnpm-lock.yaml > modern yarn.lock > npx. Classic/npm keep the fallback. */
 export function detectPackageRunner(dir: string): PackageRunner {
   for (const { files, runner } of LOCKFILE_RUNNERS) {
-    if (files.some((f) => existsSync(join(dir, f)))) return runner;
+    if (!files.some((f) => existsSync(join(dir, f)))) continue;
+    if (runner === 'yarn' && yarnClassic(dir)) return 'npx';
+    return runner;
   }
   return 'npx';
+}
+
+/** Yarn 1 uses the same filename as modern Yarn, but has no `dlx` command. */
+function yarnClassic(dir: string): boolean {
+  try {
+    const { packageManager } = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+    const pinned = typeof packageManager === 'string' && /^yarn@(\d+)\./.exec(packageManager);
+    // A modern pin may coexist with the old lockfile during a migration.
+    if (pinned) return Number(pinned[1]) === 1;
+  } catch { /* no readable packageManager pin — inspect the lockfile */ }
+  try {
+    return /^# yarn lockfile v1\s*$/m.test(readFileSync(join(dir, 'yarn.lock'), 'utf8'));
+  } catch { return false; }
 }
 
 export function launchForRunner(runner: PackageRunner): McpLaunch {

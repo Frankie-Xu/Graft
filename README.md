@@ -288,7 +288,7 @@ With no TTY to prompt on — CI, a Dockerfile, a piped shell — `init` writes *
 | `--no-hooks` | skip hook installation |
 | `--no-statusline` | skip writing Claude Code `statusLine` (same as `GRAFT_NO_STATUSLINE=1`) |
 | `--no-global` | skip writes outside this repo (the `~/.codex/` entries below) |
-| `--runner <npx\|bunx\|pnpm\|yarn>` | package runner written into generated MCP configs. Default: detect from the lockfile (`bun.lock`/`bun.lockb` → `bunx`, `pnpm-lock.yaml` → `pnpm dlx`, `yarn.lock` → `yarn dlx`, otherwise `npx -y`) |
+| `--runner <npx\|bunx\|pnpm\|yarn>` | package runner written into generated MCP configs. Default: detect from the lockfile (`bun.lock`/`bun.lockb` → `bunx`, `pnpm-lock.yaml` → `pnpm dlx`, modern `yarn.lock` → `yarn dlx`, otherwise an installed `graft` on PATH or `npx -y`) |
 
 #### Writes outside the repo
 
@@ -304,7 +304,7 @@ Both configs are user-level, so they apply to **every** repo you open with Codex
 
 ### MCP server
 
-`graft init` also registers Graft's MCP server with agents that support it, so these six tools appear natively, no shell required. Claude Code gets this too: `graft init` writes the server into the project's `.mcp.json` (restart Claude Code to load it). The launch command is the repo's package runner — `bunx` / `pnpm dlx` / `yarn dlx` / `npx -y` — so a Bun-only machine does not inherit a hardcoded `npx`. Override with `--runner`. Skip with `--no-mcp`; run it manually with `graft mcp [dir]`.
+`graft init` also registers Graft's MCP server with agents that support it, so these six tools appear natively, no shell required. Claude Code gets this too: `graft init` writes the server into the project's `.mcp.json` (restart Claude Code to load it). The launch command follows the repo's lockfile — `bunx` / `pnpm dlx` / `yarn dlx` — so a Bun repo does not inherit a hardcoded `npx`. Otherwise it uses an installed `graft` on PATH, falling back to `npx -y`. Yarn Classic uses the installed-binary / npx fallback because it has no `dlx`. Override with `--runner`. Graft still requires Node.js >=20: `bunx` honors its Node shebang. Skip with `--no-mcp`; run it manually with `graft mcp [dir]`.
 
 | Tool | Takes | What it's for |
 |---|---|---|
