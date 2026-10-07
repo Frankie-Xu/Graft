@@ -63,6 +63,8 @@ export interface ContextNode {
 /** The generated index written alongside the node files. */
 export interface Manifest {
   version: number;
+  /** Missing in graphs built before Unicode slug upgrades were recorded. */
+  slugPolicy?: string;
   /** Human label for the model that built the graph, e.g. "openrouter:openai/gpt-4o-mini". */
   model: string;
   /** sha256 over every source file's `path:hash` — the whole-graph fingerprint. */
@@ -74,6 +76,7 @@ export interface Manifest {
 }
 
 export const MANIFEST_VERSION = 1;
+export const SLUG_POLICY = "unicode-nfc";
 const GEN_START = "<!-- context:generated:start -->";
 const GEN_END = "<!-- context:generated:end -->";
 const MANIFEST_FILE = "manifest.json";
@@ -263,16 +266,30 @@ export function writeNode(dir: string, node: ContextNode): string {
 export function preserveRenamedNodeNotes(dir: string, nodes: ContextNode[]): void {
   const key = (name: string) => normalizeName(name).normalize("NFC");
   const legacy = (name: string) => normalizeName(name).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "node";
+  const previousManifest = readManifest(dir);
+  const previousRoster = new Map(previousManifest?.nodes.map(node => [node.slug, node]) ?? []);
+  const byName = new Map(nodes.map(node => [key(node.name), node]));
   const byLegacy = new Map<string, ContextNode[]>();
   for (const node of nodes) {
     const slug = legacy(node.name);
     byLegacy.set(slug, [...(byLegacy.get(slug) ?? []), node]);
   }
   for (const previous of readNodes(dir)) {
-    const candidates = byLegacy.get(previous.slug);
-    if (!candidates || !/^[a-z0-9-]+$/.test(previous.slug)) continue;
+    if (!/^[a-z0-9-]+$/.test(previous.slug)) continue;
+    // NFC and NFD names can have different old ASCII slugs (caf / cafe),
+    // while now identifying the same concept.
+    const sameName = byName.get(key(previous.name));
+    const candidates = [...new Set([...(byLegacy.get(previous.slug) ?? []), ...(sameName ? [sameName] : [])])];
+    if (candidates.length === 0) continue;
     const sameSlug = nodes.find(node => node.slug === previous.slug);
-    if (sameSlug && key(sameSlug.name) === key(previous.name)) continue;
+    // A legacy merged node may be named after its ASCII primary concept.
+    // After the upgrade, notes on that primary concept are its own again.
+    const alreadySeparated = candidates.every(node => {
+      const recorded = previousRoster.get(node.slug);
+      return recorded && key(recorded.name) === key(node.name);
+    });
+    if (sameSlug && key(sameSlug.name) === key(previous.name) &&
+        (candidates.length === 1 || previousManifest?.slugPolicy === SLUG_POLICY || alreadySeparated)) continue;
     const path = join(dir, `${previous.slug}.md`);
     if (!existsSync(path)) continue;
     const content = readFileSync(path, "utf8");
@@ -288,7 +305,7 @@ export function preserveRenamedNodeNotes(dir: string, nodes: ContextNode[]): voi
     else if (readFileSync(backup, "utf8") !== content) throw new Error(`Conflicting legacy notes backup: ${backup}`);
 
     const matching = candidates.filter(node => key(node.name) === key(previous.name));
-    if (candidates.length === 1 && matching.length === 1 && !existsSync(join(dir, `${matching[0].slug}.md`))) {
+    if (candidates.length === 1 && matching.length === 1 && !matching[0].human && !existsSync(join(dir, `${matching[0].slug}.md`))) {
       matching[0].human = human;
     } else {
       console.error(`Legacy notes for ${previous.name} were saved to ${backup}; review them before assigning them to a concept.`);

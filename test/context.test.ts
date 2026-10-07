@@ -129,6 +129,68 @@ test("mixed-script concept slugs retain the distinguishing words instead of only
   assert.equal(slugify("Cafe\u0301"), slugify("Café"), "canonical Unicode equivalents share a stable slug");
 });
 
+test("deep builds resolve links using the same canonical Unicode identities as slugs", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ctx-unicode-links-"));
+  try {
+    writeFileSync(join(dir, "concepts.ts"), "export const value = 1;\n");
+    const synthesizer: Synthesizer = {
+      async synthesize() {
+        return [
+          { name: "Service", type: "concept", summary: "Service", sources: ["concepts.ts"], links: [
+            { to: "Cafe\u0301", relation: "uses" },
+            { to: "И\u0306ого API", relation: "uses" },
+          ] },
+          { name: "Café", type: "concept", summary: "Café", sources: ["concepts.ts"], links: [] },
+          { name: "Його API", type: "concept", summary: "Його API", sources: ["concepts.ts"], links: [] },
+        ];
+      },
+    };
+    const opts = { model: "fake", summarizer: new PassthroughSummarizer(), synthesizer };
+    const first = await buildContext(dir, opts);
+    assert.equal(first.nodes, 3);
+    assert.equal(first.links, 2);
+    const content = readFileSync(join(dir, "graft", "service.md"), "utf8");
+    assert.match(content, /\[\[café\]\]/);
+    assert.match(content, /\[\[його-api\]\]/);
+    const cached = await buildContext(dir, opts);
+    assert.equal(cached.links, 2);
+    assert.equal(readFileSync(join(dir, "graft", "service.md"), "utf8"), content);
+    assert.equal(checkContext(dir).ok, true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("an ASCII primary of a formerly merged Unicode concept gets a backup, then retains new notes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ctx-unicode-ascii-primary-"));
+  try {
+    const names = ["URL", "Канонізація URL і паритет"];
+    writeFileSync(join(dir, "concepts.ts"), names.map(name => `// [[${name}]]`).join("\n") + "\nexport const value = 1;\n");
+    await buildContext(dir, buildOpts());
+    const ctx = join(dir, "graft");
+    const legacy = readFileSync(join(ctx, "url.md"), "utf8") + "\nMERGED_THEMES_NOTE\n";
+    writeFileSync(join(ctx, "url.md"), legacy);
+    rmSync(join(ctx, `${slugify(names[1])}.md`));
+    const manifestPath = join(ctx, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    delete manifest.slugPolicy;
+    manifest.nodes = manifest.nodes.filter((node: { slug: string }) => node.slug === "url");
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    await buildContext(dir, buildOpts());
+    assert.doesNotMatch(readFileSync(join(ctx, "url.md"), "utf8"), /MERGED_THEMES_NOTE/);
+    const backups = readdirSync(join(ctx, ".cache", "slug-upgrades"));
+    assert.equal(backups.length, 1);
+    assert.equal(readFileSync(join(ctx, ".cache", "slug-upgrades", backups[0]), "utf8"), legacy);
+    assert.equal(JSON.parse(readFileSync(manifestPath, "utf8")).slugPolicy, "unicode-nfc");
+
+    const modern = readFileSync(join(ctx, "url.md"), "utf8") + "\nCURRENT_URL_NOTE\n";
+    writeFileSync(join(ctx, "url.md"), modern);
+    await buildContext(dir, buildOpts());
+    assert.equal(readFileSync(join(ctx, "url.md"), "utf8"), modern, "notes authored after upgrade belong to the ASCII concept");
+    assert.deepEqual(readdirSync(join(ctx, ".cache", "slug-upgrades")), backups);
+    assert.equal(checkContext(dir).ok, true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 for (const names of [["Café"], ["Café", "Cafê"], ["Café", "Caf"]]) {
   const ambiguous = names.length > 1;
   test(`Unicode slug upgrade preserves legacy notes for ${names.join(" / ")}`, async () => {
