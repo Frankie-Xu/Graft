@@ -359,3 +359,16 @@ test('orphan-only graft subtable is removed by retract', () => {
   assert.ok(!text.includes('mcp_servers.graft'), 'orphan gone via uninstall path');
   assert.ok(text.includes('[mcp_servers.other]'), 'foreign preserved');
 });
+
+test('Codex retract preserves table-looking text inside a foreign multiline string', () => {
+  const repo = fresh(); const home = fresh();
+  const foreign = '[mcp_servers.other.env]\nSCRIPT = \'\'\'\n[mcp_servers.graft.env]\ntext\n\'\'\'\nKEEP = "2"\n';
+  const toml = write(home, join('.codex', 'config.toml'),
+    '[mcp_servers.graft]\ncommand = "graft"\n' + foreign);
+  const result = byPath(runRetract(repo, { apply: true, home }));
+  assert.equal(result.get(toml), 'removed');
+  assert.equal(readFileSync(toml, 'utf8'), foreign);
+  const again = byPath(runRetract(repo, { apply: true, home }));
+  assert.equal(again.get(toml), 'absent', 'string content does not trigger another removal');
+  assert.equal(readFileSync(toml, 'utf8'), foreign);
+});

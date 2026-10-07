@@ -94,6 +94,41 @@ export function mergeJsonKey(id: string, path: string, topKey: string, entry: ob
 /** The `[mcp_servers.graft]` table header, as written and as matched. */
 const TOML_HEADER = '[mcp_servers.graft]';
 
+type TomlStringQuote = '"' | "'";
+
+/** Carry multiline string context across lines without interpreting their text as tables. */
+function nextTomlMultilineQuote(line: string, carried: TomlStringQuote | null): TomlStringQuote | null {
+  let quote = carried;
+  let multiline = carried !== null;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (quote !== null) {
+      if (quote === '"' && char === '\\') {
+        i++; // Basic strings escape the next character; literal strings do not.
+      } else if (char === quote) {
+        if (!multiline) {
+          quote = null;
+        } else if (line.startsWith(quote.repeat(3), i)) {
+          const closing = quote;
+          quote = null;
+          multiline = false;
+          i += 2;
+          // Four/five closing quotes include one/two literal quotes, not a new string.
+          while (line[i + 1] === closing) i++;
+        }
+      }
+    } else {
+      if (char === '#') break;
+      if (char === '"' || char === "'") {
+        quote = char;
+        multiline = line.startsWith(char.repeat(3), i);
+        if (multiline) i += 2;
+      }
+    }
+  }
+  return multiline ? quote : null;
+}
+
 /**
  * Remove every canonical graft-owned table from a TOML config, returning the rest.
  *
@@ -107,7 +142,7 @@ const TOML_HEADER = '[mcp_servers.graft]';
  * `retract.ts` can never disagree about what "graft's section" means.
  */
 export function stripTomlSection(text: string): { rest: string; found: boolean } {
-  const lines = text.split('\n');
+  const lines = text.split(/(?<=\n)/);
   // The trailing dot keeps similarly-named tables (`[mcp_servers.graft2]`,
   // `[other.graft]`) out of the family.
   const familyPrefix = `${TOML_HEADER.slice(0, -1)}.`;
@@ -117,19 +152,22 @@ export function stripTomlSection(text: string): { rest: string; found: boolean }
     const header = trimmed.split(/\s+/)[0];
     return header === TOML_HEADER || header.startsWith(familyPrefix);
   };
-  if (!lines.some(isFamilyHeader)) return { rest: text, found: false };
+  let multiline: TomlStringQuote | null = null;
+  let found = false;
   let inGraft = false;
   const kept: string[] = [];
   for (const line of lines) {
-    if (line.trimStart().startsWith('[')) {
+    if (multiline === null && line.trimStart().startsWith('[')) {
       inGraft = isFamilyHeader(line);
-      if (inGraft) continue;
+      found ||= inGraft;
     }
     if (!inGraft) kept.push(line);
+    multiline = nextTomlMultilineQuote(line, multiline);
   }
+  if (!found) return { rest: text, found: false };
+  // Interior blank lines can be multiline string data; preserve them verbatim.
   const rest = kept
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
+    .join('')
     .replace(/^\n+/, '');
   return { rest, found: true };
 }

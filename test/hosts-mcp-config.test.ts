@@ -210,3 +210,88 @@ test('stripTomlSection removes orphan-only subtable without parent', () => {
   assert.ok(!rest.includes('mcp_servers.graft'), 'orphan gone');
   assert.ok(rest.includes('[mcp_servers.other]'), 'foreign preserved');
 });
+
+for (const quote of ['"', "'"]) {
+  const delimiter = quote.repeat(3);
+  test(`stripTomlSection preserves foreign multiline ${quote} strings`, () => {
+    const foreign = [
+      '[mcp_servers.other.env]',
+      `SCRIPT = ${delimiter}`,
+      '[mcp_servers.graft]',
+      '', '', '',
+      '[mcp_servers.graft.env]',
+      'this is string content',
+      delimiter,
+      'KEEP = "2"',
+      '',
+    ].join('\n');
+    const { rest, found } = stripTomlSection('[mcp_servers.graft]\ncommand = "graft"\n' + foreign);
+    assert.equal(found, true);
+    assert.equal(rest, foreign, 'the foreign string and following key survive byte-for-byte');
+    assert.deepEqual(stripTomlSection(foreign), { rest: foreign, found: false },
+      'table-looking string content is not an owned table');
+  });
+
+  test(`stripTomlSection removes owned multiline ${quote} strings completely`, () => {
+    const foreign = '[mcp_servers.other]\ncommand = "other"\n';
+    const text = [
+      '[mcp_servers.graft]',
+      `NOTE = ${delimiter}`,
+      '[mcp_servers.other]',
+      'still owned string content',
+      delimiter,
+      'command = "graft"',
+      foreign,
+    ].join('\n');
+    assert.deepEqual(stripTomlSection(text), { rest: foreign, found: true });
+  });
+
+  for (const closingLength of [4, 5]) {
+    test(`stripTomlSection recognizes a table after ${closingLength} closing ${quote} quotes`, () => {
+      const foreign = `[mcp_servers.other.env]\nNOTE = ${delimiter}content${quote.repeat(closingLength)}\n`;
+      assert.deepEqual(stripTomlSection(foreign + '[mcp_servers.graft]\ncommand = "graft"\n'),
+        { rest: foreign, found: true });
+    });
+  }
+}
+
+test('stripTomlSection ignores delimiters in comments and single-line strings', () => {
+  const foreign = [
+    '[mcp_servers.other.env]',
+    '# """ and \'\'\' are comments',
+    'A = "\'\'\'" # """',
+    'B = \'"""\'',
+    'C = "escaped \\\" quotation"',
+    '',
+  ].join('\n');
+  assert.deepEqual(stripTomlSection(foreign + '[mcp_servers.graft.env]\nX = "1"\n'),
+    { rest: foreign, found: true });
+});
+
+test('stripTomlSection respects escaped multiline basic-string quotes', () => {
+  const foreign = [
+    '[mcp_servers.other.env]',
+    'SCRIPT = """',
+    'an escaped delimiter: \\"""',
+    '[mcp_servers.graft.env]',
+    'still string content',
+    '"""',
+    'KEEP = "2"',
+    '',
+  ].join('\n');
+  assert.deepEqual(stripTomlSection(foreign + '[mcp_servers.graft]\ncommand = "graft"\n'),
+    { rest: foreign, found: true });
+});
+
+test('Codex registration preserves foreign multiline strings across re-registration', () => {
+  const repo = fresh(); const home = fresh();
+  const foreign = '[mcp_servers.other.env]\nSCRIPT = \'\'\'\n[mcp_servers.graft.env]\ntext\n\'\'\'\nKEEP = "2"\n';
+  mkdirSync(join(home, '.codex'), { recursive: true });
+  const path = join(home, '.codex', 'config.toml');
+  writeFileSync(path, '[mcp_servers.graft]\ncommand = "old"\n' + foreign);
+  assert.deepEqual(registerMcpConfigs(repo, ['agents'], { home }).map((w) => w.action), ['updated']);
+  const registered = readFileSync(path, 'utf8');
+  assert.ok(registered.startsWith(foreign), 'foreign configuration survives the writer');
+  assert.deepEqual(registerMcpConfigs(repo, ['agents'], { home }).map((w) => w.action), ['unchanged']);
+  assert.equal(readFileSync(path, 'utf8'), registered);
+});
