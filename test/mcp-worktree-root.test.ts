@@ -22,7 +22,7 @@ function git(cwd: string, ...args: string[]): string {
 const source = (version: string, caller: string): string =>
   `export function version(): string {\n  return '${version}';\n}\nexport function ${caller}(): string {\n  return version();\n}\nexport function entry(): string {\n  return ${caller}();\n}\n`;
 async function fixture(t: { after: (fn: () => void) => void }) {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), 'graft-mcp-roots-')));
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'graft-mcp-roots-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const main = join(base, 'main');
   mkdirSync(join(main, 'src'), { recursive: true });
@@ -43,7 +43,7 @@ async function fixture(t: { after: (fn: () => void) => void }) {
 function body(text: string): string { return text.split('\n[graft] root:')[0]; }
 function provenance(text: string, root: string, head: string): void {
   const footer = text.slice(text.lastIndexOf('\n[graft] root:') + 1);
-  assert.equal(footer, `[graft] root: ${realpathSync(root)} · HEAD: ${head}`);
+  assert.equal(footer, `[graft] root: ${realpathSync.native(root)} · HEAD: ${head}`);
 }
 
 test('every schema accepts an optional root', () => {
@@ -167,7 +167,7 @@ test('a pinned --dir never follows root to another checkout', async (t) => {
 });
 
 test('non-Git default queries keep working and report unavailable HEAD', async (t) => {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'graft-mcp-no-git-')));
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'graft-mcp-no-git-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, 'x.ts'), 'export function standalone() { return 1; }\n');
   await buildGraph(dir);

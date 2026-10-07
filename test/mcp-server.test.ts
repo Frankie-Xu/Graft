@@ -156,7 +156,7 @@ test('unknown method returns -32601', async () => {
 
 
 test('one MCP server answers concurrent calls from distinct same-repository checkouts', async (t) => {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), 'graft-mcpsrv-roots-')));
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'graft-mcpsrv-roots-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const main = join(base, 'main'); mkdirSync(main);
   const git = (...args: string[]): string => execFileSync('git', ['-c', 'commit.gpgsign=false', ...args], {
@@ -191,6 +191,6 @@ test('one MCP server answers concurrent calls from distinct same-repository chec
     const text = answer.content[0].text;
     assert.ok(text.includes(marker), text); assert.ok(!text.includes(absent), text);
     const footer = text.slice(text.lastIndexOf('\n[graft] root:') + 1);
-    assert.equal(footer, `[graft] root: ${realpathSync(root)} · HEAD: ${head}`);
+    assert.equal(footer, `[graft] root: ${realpathSync.native(root)} · HEAD: ${head}`);
   }
 });
