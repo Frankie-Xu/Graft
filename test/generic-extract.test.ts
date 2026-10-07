@@ -514,3 +514,39 @@ test("Zig fn/const struct/named test become symbols; call edges resolve; unnamed
   assert.ok(calls.includes("run→helper"), `run → helper (got ${calls.join(", ")})`);
   assert.ok(calls.includes("calls helper→helper"), `named test → helper (got ${calls.join(", ")})`);
 });
+
+test("Zig functions inside structs keep their own symbols and call owners", async () => {
+  await warmGenericGrammars(["zig"]);
+  const source = `const Point = struct {
+    fn local(n: i32) i32 {
+        return helper(n);
+    }
+};
+fn helper(n: i32) i32 { return n; }
+pub fn run() i32 { return Point.local(1); }
+`;
+  const { nodes, rawEdges } = extractGeneric("src/point.zig", source, "zig");
+  assert.deepEqual(
+    nodes.filter((n) => n.kind !== "file").map((n) => `${n.kind}:${n.name}`).sort(),
+    ["function:helper", "function:local", "function:run", "struct:Point"],
+  );
+  assert.equal(nodes.find((n) => n.name === "local")!.span, "L2-L4");
+  const calls = resolveEdges(nodes, rawEdges)
+    .filter((e) => e.relation === "calls")
+    .map((e) => `${e.source.split("#")[1]}→${e.target.split("#")[1]}`).sort();
+  assert.deepEqual(calls, ["local→helper", "run→local"]);
+});
+
+test("Zig named tests preserve the complete source spelling of escaped labels", async () => {
+  await warmGenericGrammars(["zig"]);
+  const source = String.raw`fn helper() void {}
+test "quoted \"name\"" { helper(); }
+`;
+  const name = String.raw`quoted \"name\"`;
+  const { nodes, rawEdges } = extractGeneric("src/labels.zig", source, "zig");
+  assert.deepEqual(nodes.filter((n) => n.kind === "function").map((n) => n.name).sort(), ["helper", name]);
+  const calls = resolveEdges(nodes, rawEdges).filter((e) => e.relation === "calls");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].source, `src/labels.zig#${name}`);
+  assert.equal(calls[0].target, "src/labels.zig#helper");
+});

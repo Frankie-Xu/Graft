@@ -398,7 +398,12 @@ function tagsExtract(
     const defKey = Object.keys(cap).find((k) => k.startsWith("definition."));
     if (defKey && cap.name) {
       defNameAt.add(cap.name.startIndex);
-      mkDef(cap.name.text, KIND[defKey.slice("definition.".length)] ?? "function", defScope(cap[defKey], langName));
+      // Zig test labels can contain escapes, which split into several
+      // string_content nodes. Use the whole string's inner source spelling so
+      // escaped labels stay complete and ordinary labels keep their names.
+      const name = langName === "zig" && cap[defKey].type === "test_declaration" && cap.name.type === "string"
+        ? cap.name.text.slice(1, -1) : cap.name.text;
+      mkDef(name, KIND[defKey.slice("definition.".length)] ?? "function", defScope(cap[defKey], langName));
     }
     if (("reference.call" in cap || "reference.send" in cap) && cap.name)
       calls.push({ name: cap.name.text, at: cap.name.startIndex });
@@ -518,6 +523,10 @@ function nextNamedSibling(n: TsNode): TsNode | null {
   return null;
 }
 function defScope(node: TsNode, langName?: string): TsNode {
+  // Zig queries already capture complete declarations. Expanding a struct's
+  // nested function through struct_declaration to variable_declaration would
+  // give it the struct's span, dropping the function and its call ownership.
+  if (langName === "zig") return node;
   let n = node;
   while (n.parent && DEF_CONTAINER.test(n.parent.type)) n = n.parent;
   // Dart's grammar leaves `function_signature` / `method_signature` as a sibling

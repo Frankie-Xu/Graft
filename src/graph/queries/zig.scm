@@ -24,7 +24,7 @@
   (struct_declaration)) @definition.struct
 
 (test_declaration
-  (string (string_content) @name)) @definition.function
+  (string) @name) @definition.function
 
 (call_expression
   function: (identifier) @name) @reference.call
