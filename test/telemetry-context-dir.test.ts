@@ -13,6 +13,9 @@ import { CI_ENV_VARS } from '../src/telemetry/gate.js';
 import { cacheDir, resolveContextDir } from '../src/util/state.js';
 
 const cli = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
+// --import resolves a bare package from the child's cwd, which is intentionally
+// a scratch repo/caller here. Resolve the loader beside this test instead.
+const tsxLoader = import.meta.resolve('tsx');
 
 function sandbox(t: TestContext) {
   const base = mkdtempSync(join(tmpdir(), 'graft-telemetry-dir-'));
@@ -43,7 +46,7 @@ function sandbox(t: TestContext) {
 }
 
 function run(repo: string, env: NodeJS.ProcessEnv, args: string[], success = true, cwd = repo): void {
-  const child = spawnSync(process.execPath, ['--import', 'tsx', cli, ...args], {
+  const child = spawnSync(process.execPath, ['--import', tsxLoader, cli, ...args], {
     cwd, env, encoding: 'utf8', timeout: 60_000,
   });
   assert.equal(child.error, undefined);
@@ -131,7 +134,7 @@ test('MCP query telemetry uses the same explicit graph cache as the tool', async
   const { repo, home, external, env } = sandbox(t);
   run(repo, env, ['build', repo, '--dir', external]);
   const id = storedId(external);
-  const child = spawn(process.execPath, ['--import', 'tsx', cli, 'mcp', repo, '--dir', external], {
+  const child = spawn(process.execPath, ['--import', tsxLoader, cli, 'mcp', repo, '--dir', external], {
     cwd: repo, env, stdio: ['pipe', 'pipe', 'pipe'],
   });
   let stderr = ''; child.stderr.on('data', chunk => { stderr += chunk; });
