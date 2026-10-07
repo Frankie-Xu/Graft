@@ -42,7 +42,8 @@ async function fixture(t: { after: (fn: () => void) => void }) {
 }
 function body(text: string): string { return text.split('\n[graft] root:')[0]; }
 function provenance(text: string, root: string, head: string): void {
-  assert.ok(text.endsWith(`[graft] root: ${root} · HEAD: ${head}`), text);
+  const footer = text.slice(text.lastIndexOf('\n[graft] root:') + 1);
+  assert.equal(footer, `[graft] root: ${realpathSync(root)} · HEAD: ${head}`);
 }
 
 test('every schema accepts an optional root', () => {

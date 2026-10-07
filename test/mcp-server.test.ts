@@ -190,6 +190,7 @@ test('one MCP server answers concurrent calls from distinct same-repository chec
     assert.equal(answer.isError, false);
     const text = answer.content[0].text;
     assert.ok(text.includes(marker), text); assert.ok(!text.includes(absent), text);
-    assert.ok(text.endsWith(`[graft] root: ${root} · HEAD: ${head}`), text);
+    const footer = text.slice(text.lastIndexOf('\n[graft] root:') + 1);
+    assert.equal(footer, `[graft] root: ${realpathSync(root)} · HEAD: ${head}`);
   }
 });
