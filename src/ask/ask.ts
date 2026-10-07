@@ -19,7 +19,7 @@ import matter from "gray-matter";
 import { contextDirFor } from "../context/node-file.js";
 import { withSavings, savingsFor, savingsTurnNudge, type Savings } from "../context/savings.js";
 import { loadGraphCached, loadAskIndexCached } from "../graph/load.js";
-import { formatSizeSkipLine, matchSkippedFile, skippedFromGraph, skippedQueryNote } from "../graph/skipped.js";
+import { formatSizeSkipLine, matchSkippedFiles, skippedFromGraph, skippedQueryNote } from "../graph/skipped.js";
 import {
   assertPrefixIndexed,
   pathUnderPrefix,
@@ -1450,18 +1450,30 @@ export function skeleton(dir: string, file: string, opts: { contextDir?: string 
   const graph = loadGraphCached(outDir);
   if (!graph) return { file, entries: [], note: "no wiring graph — run `graft build` first" };
 
-  let defs = graph.nodes.filter((n) => n.kind !== "file" && n.path === file);
+  const want = file.replace(/\\/g, "/");
+  const skippedMatches = matchSkippedFiles(skippedFromGraph(graph), want);
+  const exactSkip = skippedMatches.find((s) => s.path === want);
+  if (exactSkip) return { file: exactSkip.path, entries: [], note: `${formatSizeSkipLine(exactSkip)} — not indexed` };
+  let defs = graph.nodes.filter((n) => n.kind !== "file" && n.path === want);
+  if (!defs.length && graph.nodes.some((n) => n.path === want))
+    return { file: want, entries: [], note: "no definitions indexed for this file" };
   if (!defs.length) {
     const matches = new Set(
-      graph.nodes.filter((n) => n.path === file || n.path.endsWith(`/${file}`)).map((n) => n.path),
+      [...graph.nodes.filter((n) => n.path === want || n.path.endsWith(`/${want}`)).map((n) => n.path),
+        ...skippedMatches.map((s) => s.path)],
     );
     if (matches.size > 1)
-      return { file, entries: [], note: `ambiguous — matches: ${[...matches].sort().join(", ")}` };
+      return {
+        file,
+        entries: [],
+        note: `ambiguous — matches: ${[...matches].sort().join(", ")}` +
+          (skippedMatches.length ? `; ${skippedQueryNote(skippedMatches)} — use a repo-relative path` : ""),
+      };
     const [path] = matches;
     if (path) defs = graph.nodes.filter((n) => n.kind !== "file" && n.path === path);
   }
   if (!defs.length) {
-    const hit = matchSkippedFile(skippedFromGraph(graph), file);
+    const hit = skippedMatches.length === 1 ? skippedMatches[0] : undefined;
     if (hit) return { file: hit.path, entries: [], note: `${formatSizeSkipLine(hit)} — not indexed` };
     return { file, entries: [], note: "no definitions indexed for this file" };
   }
@@ -1556,11 +1568,9 @@ export function formatAsk(r: AskResult): string {
 function escalationNudge(r: AskResult): string {
   if ((r.mode !== "lexical" && r.mode !== "empty") || r.hits.length > 3) return "";
   const n = r.hits.length;
-  const sizeNote = n === 0 ? skippedQueryNote(r.skipped ?? []) : "";
   return (
     `\n\n[graft] ${n === 0 ? "no hits" : `only ${n} hit${n === 1 ? "" : "s"}`} — don't re-ask with new wording; switch tool: ` +
-    "`graft grep \"<literal>\"` for every occurrence · `graft skeleton <file>` for a file's full API · `graft callers <symbol>` for who-uses." +
-    (sizeNote ? ` ${sizeNote}.` : "")
+    "`graft grep \"<literal>\"` for every occurrence · `graft skeleton <file>` for a file's full API · `graft callers <symbol>` for who-uses."
   );
 }
 

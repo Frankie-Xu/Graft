@@ -186,7 +186,12 @@ function remapSkipPaths(requested: string, canonical: string, skipped?: SizeSkip
 }
 
 function noteOversized(abs: string, bytes: number, skipped?: SizeSkip[]): void {
-  skipped?.push({ path: abs, bytes, reason: "size" });
+  if (!skipped) return;
+  // Git can emit one record per index stage during an unresolved merge. A file
+  // was skipped once, regardless of how many records name it.
+  const prior = skipped.find((s) => s.path === abs);
+  if (prior) prior.bytes = bytes;
+  else skipped.push({ path: abs, bytes, reason: "size" });
 }
 
 /** Git's canonical working-tree file set, relative to `dir`. Tracked files are

@@ -484,3 +484,76 @@ test("walkDir filesystem fallback also records oversized files (#370)", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+for (const git of [false, true]) {
+  test(`walkDir enforces the exact byte cap (${git ? "Git" : "filesystem"}) (#370)`, () => {
+    const dir = git ? fixture("size-boundaries") : mkdtempSync(join(tmpdir(), "graft-size-boundaries-"));
+    try {
+      for (const [path, size] of [["below.ts", MAX_FILE_BYTES - 1], ["exact.ts", MAX_FILE_BYTES], ["above.ts", MAX_FILE_BYTES + 1]] as const) {
+        writeFileSync(join(dir, path), Buffer.alloc(size, 0x61));
+      }
+      if (git) commitAll(dir, "size boundaries");
+      for (const followNestedRepos of [false, true]) {
+        const skipped: SizeSkip[] = [];
+        const files = walkDir(dir, undefined, { skipped, followNestedRepos }).map((path) => relative(dir, path).replace(/\\/g, "/")).sort();
+        assert.deepEqual(files, ["below.ts", "exact.ts"]);
+        assert.deepEqual(skipped, [{ path: join(dir, "above.ts"), bytes: MAX_FILE_BYTES + 1, reason: "size" }]);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test("size skips follow opted-in submodules and nested repos (#370)", () => {
+  const parent = fixture("size-parent");
+  const child = fixture("size-child");
+  try {
+    writeFileSync(join(child, "big.ts"), Buffer.alloc(MAX_FILE_BYTES + 1, 0x61));
+    commitAll(child, "oversized source");
+    addLocalSubmodule(parent, child, "deps/child");
+    execFileSync("git", ["clone", "-q", child, join(parent, "nested")]);
+    const skipped: SizeSkip[] = [];
+    walkDir(parent, undefined, { skipped });
+    assert.deepEqual(skipped, []);
+    walkDir(parent, undefined, { skipped, followSubmodules: true, followNestedRepos: true });
+    assert.deepEqual(skipped.map((s) => relative(parent, s.path).replace(/\\/g, "/")).sort(), ["deps/child/big.ts", "nested/big.ts"]);
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+    rmSync(child, { recursive: true, force: true });
+  }
+});
+
+test("size skips on a symlink root retain the requested path (#370)", () => {
+  const dir = fixture("size-symlink");
+  const alias = `${dir}-alias`;
+  try {
+    writeFileSync(join(dir, "big.ts"), Buffer.alloc(MAX_FILE_BYTES + 1, 0x61));
+    symlinkSync(dir, alias, process.platform === "win32" ? "junction" : "dir");
+    const skipped: SizeSkip[] = [];
+    walkDir(alias, undefined, { skipped });
+    assert.deepEqual(skipped, [{ path: join(alias, "big.ts"), bytes: MAX_FILE_BYTES + 1, reason: "size" }]);
+  } finally {
+    rmSync(alias, { force: true, recursive: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a conflicted Git path is counted as one size skip (#370)", () => {
+  const dir = fixture("size-conflict");
+  try {
+    writeFileSync(join(dir, "big.ts"), Buffer.alloc(MAX_FILE_BYTES + 1, 0x61));
+    const oid = execFileSync("git", ["hash-object", "-w", "big.ts"], { cwd: dir, encoding: "utf8" }).trim();
+    execFileSync("git", ["update-index", "--index-info"], {
+      cwd: dir,
+      input: [1, 2, 3].map((stage) => `100644 ${oid} ${stage}\tbig.ts\n`).join(""),
+    });
+    for (const followNestedRepos of [false, true]) {
+      const skipped: SizeSkip[] = [];
+      assert.deepEqual(walkDir(dir, undefined, { skipped, followNestedRepos }), []);
+      assert.deepEqual(skipped, [{ path: join(dir, "big.ts"), bytes: MAX_FILE_BYTES + 1, reason: "size" }]);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

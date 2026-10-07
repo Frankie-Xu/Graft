@@ -9,7 +9,9 @@ export type SizeSkip = { path: string; bytes: number; reason: "size" };
 
 export function formatBytes(bytes: number): string {
   const mb = bytes / 1_000_000;
-  const shown = mb >= 10 ? String(Math.round(mb)) : mb.toFixed(1);
+  let shown = mb >= 10 ? String(Math.round(mb)) : mb.toFixed(1);
+  // The first byte over the cap must not render as "1.0 MB > 1 MB".
+  if (bytes > 1_000_000 && shown === "1.0") shown = mb.toFixed(6).replace(/0+$/, "");
   return `${shown} MB`;
 }
 
@@ -21,11 +23,13 @@ export function skippedFromGraph(graph: GraphV1 | null | undefined): SizeSkip[] 
   return graph?.meta.skipped ?? [];
 }
 
-export function matchSkippedFile(skipped: SizeSkip[], file: string): SizeSkip | undefined {
+export function matchSkippedFiles(skipped: SizeSkip[], file: string): SizeSkip[] {
   const want = file.replace(/\\/g, "/");
-  return skipped.find((s) => {
+  const exact = skipped.find((s) => s.path.replace(/\\/g, "/") === want);
+  if (exact) return [exact];
+  return skipped.filter((s) => {
     const path = s.path.replace(/\\/g, "/");
-    return path === want || path.endsWith(`/${want}`);
+    return path.endsWith(`/${want}`);
   });
 }
 

@@ -32,7 +32,7 @@ import {
 } from "./extract-cache.js";
 import { writeFingerprint } from "./fingerprint.js";
 import { seedGraph, type SeedResult } from "./seed.js";
-import { filterByOnlyDirs, listSourceStats } from "./source-files.js";
+import { filterByOnlyDirs, listSourceFiles, listSourceStats } from "./source-files.js";
 import { resolveEdges, type GoModule } from "./resolve.js";
 import { enrichGraph, type EnrichStats } from "./enrich.js";
 import { readGraph, writeGraph, wiringPath } from "./write.js";
@@ -302,7 +302,10 @@ export async function buildGraph(
   // disk periodically (#128): crux/summary mutate node objects in place and never
   // change the node/edge SET, so `meta` stays valid; the opt-in LSP pass below is the
   // only thing that adds edges, and it runs before the final write.
-  const skipped = sizeSkips.map((s) => ({
+  // A walk sees configs/binaries and files outside --only-dir too. Report only
+  // files this graph would have indexed had they fit under the byte cap.
+  const skippedPaths = new Set(listSourceFiles(root, outDir, sizeSkips.map((s) => s.path), onlyDirs));
+  const skipped = sizeSkips.filter((s) => skippedPaths.has(s.path)).map((s) => ({
     path: relPosix(root, s.path),
     bytes: s.bytes,
     reason: "size" as const,
@@ -368,7 +371,7 @@ export async function buildGraph(
   // these source bytes." Nothing about the projections below — which is why it is
   // safe to write here, and why `graphOnly` builds (the query path, which stops
   // right after this line) are still recorded as fresh.
-  writeFingerprint(outDir, entries, opts.onlyDirs);
+  writeFingerprint(outDir, entries, opts.onlyDirs, skipped);
 
   // Tier-2 passive surface: project the nodes into per-file markdown cards, and
   // refresh the INDEX roster. Pure projection — no LLM, no network.
