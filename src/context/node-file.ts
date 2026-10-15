@@ -23,7 +23,7 @@
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import matter from "gray-matter";
+import { matter } from "../util/front-matter.js";
 import { contentHash, normalizeName } from "../util/id.js";
 import { relPosix, stripTrailingSlashes } from "../util/paths.js";
 // Value-only import of a constant; `write.ts` pulls in nothing from here, so no cycle.

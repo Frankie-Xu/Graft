@@ -54,6 +54,33 @@ test('every schema accepts an optional root', () => {
   }
 });
 
+for (const brand of ['graft', 'trail'] as const) {
+  test(`${brand} and legacy aliases select the same worktree with branded provenance`, async (t) => {
+    const previous = process.env.TRAIL_INVOKED_AS;
+    process.env.TRAIL_INVOKED_AS = brand;
+    t.after(() => {
+      if (previous === undefined) delete process.env.TRAIL_INVOKED_AS;
+      else process.env.TRAIL_INVOKED_AS = previous;
+    });
+    const f = await fixture(t);
+    for (const prefix of ['graft', 'trail']) {
+      const answer = await callTool(f.main, `${prefix}_find_all`, { pattern: 'checkout', root: f.review });
+      assert.equal(answer.isError, false, answer.text);
+      assert.match(answer.text, /old-checkout/);
+      assert.doesNotMatch(answer.text, /current-checkout/);
+      assert.ok(answer.text.endsWith(`[${brand}] root: ${f.review} · HEAD: ${f.olderHead}`));
+    }
+    const missing = join(f.base, 'empty');
+    mkdirSync(missing);
+    const rejected = await callTool(f.main, `${brand}_find_all`, { pattern: 'checkout', root: missing });
+    assert.equal(rejected.isError, true);
+    assert.equal(existsSync(join(missing, 'graft')), false, 'invalid roots never create a graph');
+    const noGraph = await callTool(missing, `${brand}_trace_calls`, { symbol: 'missing' });
+    assert.equal(noGraph.isError, true);
+    assert.ok(noGraph.text.includes(`${brand} build`), noGraph.text);
+  });
+}
+
 test('two checkout graphs, source spans and HEADs stay isolated across all tools and cached calls', async (t) => {
   const f = await fixture(t);
   const defaults = await callTool(f.main, 'graft_find_code', { query: 'version', full: true });

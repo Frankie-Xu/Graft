@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { realpathSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { gitEnvForDirectory } from '../util/git-env.js';
+import { tag } from '../brand.js';
 
 /** Git must inspect the requested directory, even when the host inherited a
  * repository override (for example from a Git hook). */
@@ -58,5 +59,5 @@ export function resolveToolRoot(serverRoot: string, requested: unknown, dirOverr
 export function rootNote(root: string): string {
   let head = 'unavailable';
   try { head = git(root, '--verify', 'HEAD'); } catch { /* non-Git/unborn checkout */ }
-  return `[graft] root: ${resolve(root)} · HEAD: ${head}`;
+  return `${tag()} root: ${resolve(root)} · HEAD: ${head}`;
 }
