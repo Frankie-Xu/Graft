@@ -32,6 +32,16 @@ function byPath(rs: ReturnType<typeof runRetract>): Map<string, string> {
 
 const BLOCK = '<!-- graft:start -->\n## Graft — old text\nstale guidance\n<!-- graft:end -->';
 
+test('uninstall removes both TOML table families without consuming foreign multiline content', () => {
+  const repo = fresh(); const home = fresh();
+  const foreign = '[mcp_servers.other.env]\nSCRIPT = \'\'\'\n[mcp_servers.trail]\n\n\n[mcp_servers.graft.env]\n\'\'\'\nKEEP = "yes"\n';
+  const path = write(home, '.codex/config.toml', '[mcp_servers.trail]\ncommand = "trail"\n'
+    + foreign + '[mcp_servers.graft.env]\nOLD = "remove"\n[mcp_servers.trail.env]\nOLD = "remove"\n');
+  const result = byPath(runRetract(repo, { apply: true, home }));
+  assert.equal(result.get(path), 'removed');
+  assert.equal(readFileSync(path, 'utf8'), foreign);
+});
+
 // --------------------------------------------------------------------------
 // instruction files
 // --------------------------------------------------------------------------

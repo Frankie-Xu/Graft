@@ -11,6 +11,38 @@ import { registerMcpConfigs, serverEntry, stripTomlSection } from '../src/hosts/
 
 function fresh(): string { return mkdtempSync(join(tmpdir(), 'graft-mcpcfg-')); }
 
+for (const name of ['graft', 'trail'] as const) {
+  for (const quote of ['"', "'"]) {
+    test(`${name} removal preserves multiline ${quote} data and the other brand`, () => {
+      const other = name === 'graft' ? 'trail' : 'graft';
+      const delimiter = quote.repeat(3);
+      const foreign = `[mcp_servers.${other}.env]\r\nSCRIPT = ${delimiter}\r\n[mcp_servers.${name}]\r\n\r\n\r\n[mcp_servers.${name}.env]\r\n${delimiter}\r\nKEEP = "yes"\r\n`;
+      const similar = `[mcp_servers.${name}2]\r\ncommand = "foreign"\r\n`;
+      const owned = `[mcp_servers.${name}]\r\nNOTE = ${delimiter}\r\n[mcp_servers.foreign]\r\n${delimiter}\r\n`;
+      const text = owned + foreign + `[mcp_servers.${name}.env]\r\nOWNED = "remove"\r\n` + similar;
+      assert.deepEqual(stripTomlSection(text, name), { found: true, rest: foreign + similar });
+      assert.deepEqual(stripTomlSection(foreign + similar, name), { found: false, rest: foreign + similar });
+    });
+  }
+}
+
+test('Trail registration migrates both real table families but preserves multiline lookalikes', () => {
+  const repo = fresh(); const home = fresh();
+  mkdirSync(join(home, '.codex'), { recursive: true });
+  const path = join(home, '.codex', 'config.toml');
+  const foreign = '[mcp_servers.other.env]\nSCRIPT = """\n[mcp_servers.graft]\n\n\n[mcp_servers.trail.env]\n"""\nKEEP = "yes"\n';
+  writeFileSync(path, '[mcp_servers.graft]\ncommand = "old"\n' + foreign
+    + '[mcp_servers.trail.env]\nOLD_TRAIL = "remove"\n[mcp_servers.graft.env]\nOLD_GRAFT = "remove"\n');
+  const writes = registerMcpConfigs(repo, ['agents'], { home, name: 'trail' });
+  assert.deepEqual(writes.map((w) => w.action), ['updated']);
+  const result = readFileSync(path, 'utf8');
+  assert.ok(result.startsWith(foreign), 'foreign multiline data is byte-identical');
+  assert.doesNotMatch(result, /OLD_TRAIL|OLD_GRAFT|command = "old"/);
+  assert.match(result, /^\[mcp_servers\.trail\]$/m);
+  assert.deepEqual(registerMcpConfigs(repo, ['agents'], { home, name: 'trail' }).map((w) => w.action), ['unchanged']);
+  assert.equal(readFileSync(path, 'utf8'), result);
+});
+
 test('cursor/gemini/kiro get repo-local JSON entries', () => {
   const repo = fresh(); const home = fresh();
   const w = registerMcpConfigs(repo, ['cursor', 'gemini', 'kiro'], { home });
